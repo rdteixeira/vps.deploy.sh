@@ -16,23 +16,17 @@ Actions:
                  its home and every project in it
 
 Options:
-  -y, --yes      Do not ask for confirmation (login shell change on create, removal on delete)
-  --only STEP    Run a single step of the action (number, name or both: 70, docker-rootless, 70-docker-rootless)
-  --list         List the action's steps and exit
+  -y, --yes      Do not ask for confirmation
   -h, --help     Show this help
 EOF
 }
 
 ORIGINAL_ARGS="$*"
 ASSUME_YES=0
-ONLY=""
-LIST=0
 POSITIONAL=()
 while (( $# )); do
   case "$1" in
     -y|--yes) ASSUME_YES=1 ;;
-    --only) ONLY="${2:?--only requires a step}"; shift ;;
-    --list) LIST=1 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
     *) POSITIONAL+=("$1") ;;
@@ -48,27 +42,10 @@ STEPS_DIR="$BASE_DIR/steps/$ACTION"
 mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.sh' | sort)
 (( ${#STEPS[@]} > 0 )) || { echo "No steps found in $STEPS_DIR." >&2; exit 1; }
 
-if (( LIST )); then
-  for step in "${STEPS[@]}"; do basename "$step" .sh; done
-  exit 0
-fi
-
 if [[ $EUID -ne 0 ]]; then
   echo "This command requires administrator privileges (sudo)." >&2
   echo "Run it again with: sudo $(basename "$0") $ORIGINAL_ARGS" >&2
   exit 1
-fi
-
-if [[ -n "$ONLY" ]]; then
-  SELECTED=()
-  for step in "${STEPS[@]}"; do
-    name="$(basename "$step" .sh)"
-    if [[ "$name" == "$ONLY" || "$name" == "$ONLY"-* || "${name#*-}" == "$ONLY" ]]; then
-      SELECTED+=("$step")
-    fi
-  done
-  (( ${#SELECTED[@]} == 1 )) || { echo "Step not found (or ambiguous): $ONLY. Use $ACTION --list." >&2; exit 1; }
-  STEPS=("${SELECTED[@]}")
 fi
 
 USER_NAME="${POSITIONAL[1]:-}"
@@ -78,6 +55,8 @@ export USER_NAME ASSUME_YES
 # Validates the user name before any step runs
 # shellcheck source=lib/common.sh
 source "$BASE_DIR/lib/common.sh"
+# Checked before any step: create signs the user with APP_KEY, delete checks that signature
+load_app_key
 
 # delete is destructive: check the user once and confirm before any step runs
 if [[ "$ACTION" == delete ]]; then

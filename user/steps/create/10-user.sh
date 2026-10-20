@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Creates the user, or makes sure an existing one has the nologin shell (with confirmation).
+# Creates and signs the user, or makes sure an existing one has the nologin shell (with confirmation).
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
+load_app_key
 
 if ! getent passwd "$USER_NAME" >/dev/null; then
   adduser --disabled-password --gecos "" --shell /usr/sbin/nologin "$USER_NAME"
   getent passwd "$USER_NAME" >/dev/null || die "adduser finished but $USER_NAME was not created."
+  USER_UID="$(id -u "$USER_NAME")"
+  # Only users created here are signed, so delete never removes users made elsewhere
+  sign_user
+  echo "User $USER_NAME created and signed (group $DEPLOY_GROUP)."
   exit 0
 fi
 
 echo "User $USER_NAME already exists — checking/adjusting the structure."
+if ! user_is_signed; then
+  echo "NOTE: $USER_NAME was not created by this tool (or APP_KEY changed); delete will refuse to remove it."
+fi
 CURRENT_SHELL="$(getent passwd "$USER_NAME" | cut -d: -f7)"
 case "$CURRENT_SHELL" in
   /usr/sbin/nologin)
