@@ -3,9 +3,16 @@
 # Expects USER_NAME (and optionally ASSUME_YES) in the environment.
 set -euo pipefail
 
-die() { echo "$*" >&2; exit 1; }
+die() {
+  echo "$*" >&2; exit 1;
+}
 
 [[ $EUID -eq 0 ]] || die "This command requires administrator privileges (sudo)."
+# Same install check as run.sh, also when user/run.sh or repo/run.sh is called directly
+TOOL_DIR="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/../..")"
+# shellcheck source=../../lib/common.sh
+source "$TOOL_DIR/lib/common.sh"
+require_trusted_install
 : "${USER_NAME:?USER_NAME is not set; run it through deploy-user}"
 ASSUME_YES="${ASSUME_YES:-0}"
 
@@ -90,4 +97,9 @@ run_as_user() {
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus" \
     "$@"
+}
+
+# Dies when the path is a symbolic link, so root never follows one the user planted in their home
+refuse_symlink() {
+  [[ ! -L "$1" ]] || die "$1 is a symbolic link; refusing to touch it as root."
 }

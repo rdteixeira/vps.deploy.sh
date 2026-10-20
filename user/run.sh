@@ -6,20 +6,9 @@ set -euo pipefail
 BASE_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 ACTIONS=(create delete)
 
-usage() {
-  cat <<EOF
-Usage: sudo $(basename "$0") <action> [options] [username]
+# shellcheck sources=lib/*.sh
+source "$BASE_DIR/lib/usage.sh"
 
-Actions:
-  create         Create (or adjust) the user with rootless Docker
-  delete         Stop the user's services and containers, then remove the user,
-                 its home and every project in it
-
-Options:
-  -y, --yes      Do not ask for confirmation
-  -h, --help     Show this help
-EOF
-}
 
 ORIGINAL_ARGS="$*"
 ASSUME_YES=0

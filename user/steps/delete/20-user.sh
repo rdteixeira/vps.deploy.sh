@@ -4,7 +4,7 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_managed_user
 
 # opt is immutable (create/20-folders); userdel -r cannot remove it otherwise
-if [[ -d "$OPT_DIR" ]]; then
+if [[ -d "$OPT_DIR" && ! -L "$OPT_DIR" ]]; then
   chattr -i "$OPT_DIR"
 fi
 
