@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lets `docker` work inside `sudo -u <user> bash`, which does not carry these variables.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 BASHRC="$HOME_DIR/.bashrc"

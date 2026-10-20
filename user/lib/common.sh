@@ -34,6 +34,14 @@ require_user() {
   [[ -n "${USER_UID:-}" ]] || die "User $USER_NAME does not exist; step 10-user must run first."
 }
 
+# delete only removes users shaped like the ones create makes (nologin), never the caller
+require_managed_user() {
+  require_user
+  [[ "$USER_NAME" != "${SUDO_USER:-}" ]] || die "User $USER_NAME is running this command and cannot be deleted."
+  [[ "$(getent passwd "$USER_NAME" | cut -d: -f7)" == /usr/sbin/nologin ]] \
+    || die "User $USER_NAME has a login shell; only nologin users (made by create) can be deleted."
+}
+
 # Runs a command as the target user inside their systemd user session
 run_as_user() {
   sudo -u "$USER_NAME" \

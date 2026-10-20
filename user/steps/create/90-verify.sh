@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prints the final state of the user, folders and Docker.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 getent passwd "$USER_NAME"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Creates ~/.ssh and ~/opt/apps; ~/opt is root-owned and immutable.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 # Remove the immutable flag (if set) so opt/apps can be adjusted

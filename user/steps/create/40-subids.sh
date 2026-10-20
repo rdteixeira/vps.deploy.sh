@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks the subordinate UID/GID ranges rootless containers need.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 for file in /etc/subuid /etc/subgid; do

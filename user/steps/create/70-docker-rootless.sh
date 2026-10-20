@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs (if needed) and starts the user's rootless Docker daemon.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 if [[ -f "$HOME_DIR/.config/systemd/user/docker.service" ]]; then

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs the packages rootless Docker needs (only the missing ones).
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 REQUIRED_PKGS=(uidmap dbus-user-session docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras)

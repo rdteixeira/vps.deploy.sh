@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ubuntu 23.10+ blocks unprivileged user namespaces through AppArmor; rootlesskit needs a profile.
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 APPARMOR_PROFILE=/etc/apparmor.d/usr.bin.rootlesskit

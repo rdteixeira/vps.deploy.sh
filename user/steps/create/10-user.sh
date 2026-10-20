@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Creates the user, or makes sure an existing one has the nologin shell (with confirmation).
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 
 if ! getent passwd "$USER_NAME" >/dev/null; then
   adduser --disabled-password --gecos "" --shell /usr/sbin/nologin "$USER_NAME"

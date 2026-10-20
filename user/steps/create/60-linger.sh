@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Keeps the user's systemd instance running without an active login (the user is nologin).
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/common.sh"
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 require_user
 
 loginctl enable-linger "$USER_NAME"
