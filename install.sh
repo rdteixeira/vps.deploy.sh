@@ -42,7 +42,7 @@ chmod 705 "$DEST_DIR/lib"
 find "$DEST_DIR/lib" -type f -exec chmod 604 {} +
 
 # `sudo vps-deploy <command>` from anywhere (run.sh resolves its own path through the link)
-rm -r "$BIN_LINK"
+rm -f "$BIN_LINK"
 ln -s "$DEST_DIR/run.sh" "$BIN_LINK"
 
 # First install only: create APP_KEY; updates never replace it

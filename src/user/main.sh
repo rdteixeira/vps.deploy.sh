@@ -1,5 +1,14 @@
-# User actions. Run only by run.sh (user_action), never directly.
+#!/usr/bin/env bash
+# Manages the user that owns the projects on the VPS.
+# Runs each script in steps/<action>/ in numeric order.
 set -euo pipefail
+
+BASE_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+cd "$BASE_DIR"
+
+# shellcheck sources=lib/*.sh
+source ../lib/usage.sh
+source ../lib/common.sh
 
 # Refuse sh/dash (and bash in POSIX mode): this file needs bash. Keep this block POSIX-compatible.
 if [ -z "${BASH_VERSION:-}" ] || case ":${SHELLOPTS:-}:" in *:posix:*) true ;; *) false ;; esac; then
@@ -7,23 +16,52 @@ if [ -z "${BASH_VERSION:-}" ] || case ":${SHELLOPTS:-}:" in *:posix:*) true ;; *
   exit 1
 fi
 
-# Folder the command was run from (relative paths given by the caller resolve against it)
-EXEC_DIR="$PWD"
-BASE_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-
-# Run from the tool's folder, so its files load by relative path
-cd "$BASE_DIR"
-
-# shellcheck sources=lib/common.sh
-source ../lib/common.sh
-
 refuse_directly_use
 
-USER_ACTIONS=(create delete)
+ACTIONS=(create delete)
 DEPLOY_GROUP=deploy
 SIGNATURE_PREFIX=vps.deploy
 
+ORIGINAL_ARGS="$*"
+ASSUME_YES=0
+POSITIONAL=()
 
+while (( $# )); do
+  case "$1" in
+    -y|--yes) ASSUME_YES=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *) POSITIONAL+=("$1") ;;
+  esac
+  shift
+done
+
+ACTION="${POSITIONAL[0]:-}"
+
+[[ -n "$ACTION" ]] || {
+  echo "Missing action." >&2;
+  usage >&2;
+  exit 1;
+}
+
+[[ " ${ACTIONS[*]} " == *" $ACTION "* ]] || {
+  echo "Unknown action: $ACTION" >&2;
+  usage >&2;
+  exit 1;
+}
+
+STEPS_DIR="$BASE_DIR/actions/$ACTION/steps/"
+
+mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.sh' | sort)
+(( ${#STEPS[@]} > 0 )) || { echo "No steps found in $STEPS_DIR." >&2; exit 1; }
+
+USER_NAME="${POSITIONAL[1]:-}"
+[[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
+export USER_NAME ASSUME_YES
+
+load_app_key
+
+echo $APP_KEY
 
 # Calls user_<action> with the remaining arguments (options and username), e.g. create -> user_create
 #main() {

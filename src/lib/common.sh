@@ -1,6 +1,9 @@
 # shellcheck shell=bash
 # Shared helpers of run.sh. Sourced, never executed; expects ENV_FILE (and ORIGINAL_ARGS for require_root).
 
+LIB_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../"
+ENV_FILE="$LIB_DIR/.env"
+
 # Prints the message to stderr and exits with status 1
 die() {
   echo "$*" >&2;
