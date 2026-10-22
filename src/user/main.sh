@@ -19,7 +19,6 @@ fi
 refuse_directly_use
 
 ACTIONS=(create delete)
-DEPLOY_GROUP=deploy
 SIGNATURE_PREFIX=vps.deploy
 
 ORIGINAL_ARGS="$*"
@@ -50,18 +49,41 @@ ACTION="${POSITIONAL[0]:-}"
   exit 1;
 }
 
-STEPS_DIR="$BASE_DIR/actions/$ACTION/steps/"
+STEPS_DIR="$BASE_DIR/actions/$ACTION/steps"
 
 mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.sh' | sort)
-(( ${#STEPS[@]} > 0 )) || { echo "No steps found in $STEPS_DIR." >&2; exit 1; }
+(( ${#STEPS[@]} > 0 )) || {
+  echo "No steps found in $STEPS_DIR." >&2;
+  exit 1;
+}
 
 USER_NAME="${POSITIONAL[1]:-}"
 [[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
 export USER_NAME ASSUME_YES
 
+HOME_DIR="/home/$USER_NAME"
+export HOME_DIR
+
+# Checked before any step: create signs the user with
+# APP_KEY, delete checks that signature
 load_app_key
 
-echo $APP_KEY
+TOTAL=${#STEPS[@]}
+INDEX=0
+for step in "${STEPS[@]}"; do
+  INDEX=$((INDEX + 1))
+  name="$(basename "$step" .sh)"
+  echo
+  echo "=== [$INDEX/$TOTAL] $ACTION/$name ==="
+  [[ -s "$step" ]] || {
+    echo "Step file $step is empty; reinstall the scripts." >&2;
+    exit 1;
+  }
+  bash "$step" || {
+    echo "Step $ACTION/$name failed; stopping." >&2;
+    exit 1;
+  }
+done
 
 # Calls user_<action> with the remaining arguments (options and username), e.g. create -> user_create
 #main() {

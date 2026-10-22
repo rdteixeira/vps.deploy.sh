@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Creates and signs the user, or makes sure an existing one has the nologin shell (with confirmation).
+# Creates and signs the user, or makes sure an existing
+# one has the nologin shell (with confirmation).
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../lib/common.sh"
 load_app_key
 

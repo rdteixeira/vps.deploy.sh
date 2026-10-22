@@ -13,6 +13,7 @@ source "$BASE_DIR/lib/usage.sh"
 ORIGINAL_ARGS="$*"
 ASSUME_YES=0
 POSITIONAL=()
+
 while (( $# )); do
   case "$1" in
     -y|--yes) ASSUME_YES=1 ;;
@@ -24,27 +25,33 @@ while (( $# )); do
 done
 
 ACTION="${POSITIONAL[0]:-}"
-[[ -n "$ACTION" ]] || { echo "Missing action." >&2; usage >&2; exit 1; }
-[[ " ${ACTIONS[*]} " == *" $ACTION "* ]] || { echo "Unknown action: $ACTION" >&2; usage >&2; exit 1; }
+
+[[ -n "$ACTION" ]] || {
+  echo "Missing action." >&2;
+  usage >&2;
+  exit 1;
+}
+
+[[ " ${ACTIONS[*]} " == *" $ACTION "* ]] || {
+  echo "Unknown action: $ACTION" >&2;
+  usage >&2;
+  exit 1;
+}
+
 STEPS_DIR="$BASE_DIR/steps/$ACTION"
 
 mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.sh' | sort)
-(( ${#STEPS[@]} > 0 )) || { echo "No steps found in $STEPS_DIR." >&2; exit 1; }
-
-if [[ $EUID -ne 0 ]]; then
-  echo "This command requires administrator privileges (sudo)." >&2
-  echo "Run it again with: sudo $(basename "$0") $ORIGINAL_ARGS" >&2
-  exit 1
-fi
+(( ${#STEPS[@]} > 0 )) || {
+  echo "No steps found in $STEPS_DIR." >&2;
+  exit 1;
+}
 
 USER_NAME="${POSITIONAL[1]:-}"
 [[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
 export USER_NAME ASSUME_YES
 
-# Validates the user name before any step runs
-# shellcheck source=lib/common.sh
-source "$BASE_DIR/lib/common.sh"
-# Checked before any step: create signs the user with APP_KEY, delete checks that signature
+# Checked before any step: create signs the user with
+# APP_KEY, delete checks that signature
 load_app_key
 
 # delete is destructive: check the user once and confirm before any step runs

@@ -3,6 +3,8 @@
 
 LIB_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../"
 ENV_FILE="$LIB_DIR/.env"
+DEPLOY_GROUP=deploy
+SIGNATURE_PREFIX=vps.deploy
 
 # Prints the message to stderr and exits with status 1
 die() {
@@ -158,4 +160,10 @@ refuse_directly_use() {
     echo "Do not run $(basename "$0") directly. Use: sudo vps-deploy user:<action>" >&2
     exit 1
   }
+}
+
+# Succeeds when the user is in the deploy group and its signature matches APP_KEY
+user_is_signed() {
+  [[ " $(id -nG "$USER_NAME") " == *" $DEPLOY_GROUP "* ]] || return 1
+  [[ "$(getent passwd "$USER_NAME" | cut -d: -f5)" == "$SIGNATURE_PREFIX $(user_signature)" ]]
 }
