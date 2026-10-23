@@ -76,9 +76,9 @@ Installed modes: tool folder `711`, `run.sh` `705`, `lib/` `705` with its files 
 install.sh          installs src/ into /opt/vps.deploy
 src/                new implementation
   run.sh            entry point (vps-deploy)
-  lib/              usage.sh, common.sh (shared helpers, signature, trust check)
+  lib/              bash.sh (bash guard), usage.sh, common.sh (shared helpers, signature, trust check)
   user/main.sh      user actions, runnable only from run.sh
-  user/actions/<action>/steps/NN-*.sh
+  user/actions/<action>/steps/NN-*.sh   steps of each action, runnable only from user/main.sh
 run.sh, lib/, user/, repo/   legacy implementation (steps/<action>/NN-*.sh, run in numeric order)
 docs/readme/        translations of this README
 ```

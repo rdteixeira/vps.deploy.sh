@@ -78,9 +78,9 @@ archivos en `604`, el resto `700`/`600`, `.env` `600`.
 install.sh          instala src/ en /opt/vps.deploy
 src/                implementación nueva
   run.sh            punto de entrada (vps-deploy)
-  lib/              usage.sh, common.sh (funciones comunes, firma, verificación de instalación)
+  lib/              bash.sh (exige bash), usage.sh, common.sh (funciones comunes, firma, verificación de instalación)
   user/main.sh      acciones de usuario, ejecutables solo desde run.sh
-  user/actions/<acción>/steps/NN-*.sh
+  user/actions/<acción>/steps/NN-*.sh   pasos de cada acción, ejecutables solo desde user/main.sh
 run.sh, lib/, user/, repo/   implementación antigua (steps/<acción>/NN-*.sh, ejecutados en orden numérico)
 docs/readme/        traducciones de este README
 ```

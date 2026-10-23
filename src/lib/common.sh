@@ -1,24 +1,17 @@
 # shellcheck shell=bash
-# Shared helpers of run.sh. Sourced, never executed; expects ENV_FILE (and ORIGINAL_ARGS for require_root).
+# Shared helpers of run.sh. Sourced, never executed; expects
+# ENV_FILE (and ARGS for require_root).
 
-LIB_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../"
-ENV_FILE="$LIB_DIR/.env"
-DEPLOY_GROUP=deploy
+ENV_FILE="$BASE_DIR/.env"
+
+ARGS="$*"
+COMMAND="${1:-}"
 SIGNATURE_PREFIX=vps.deploy
 
-# Prints the message to stderr and exits with status 1
+# Prints the message to stderr and exits with status 1 (ends the whole script, not just the function)
 die() {
   echo "$*" >&2;
   exit 1;
-}
-
-# Exits unless running as root, showing how to rerun the same command with sudo
-require_root() {
-  if [[ $EUID -ne 0 ]]; then
-    echo "This command requires administrator privileges (sudo)." >&2
-    die "Run it again with: sudo $(basename "$0") $ORIGINAL_ARGS"
-  fi
-  require_trusted_install
 }
 
 # Scripts run as root: refuses when anyone but root could change them, or swap a folder above them
@@ -37,10 +30,18 @@ require_trusted_install() {
   done
 }
 
-# Prints the current APP_KEY value without sourcing .env (which would run any code in it)
-read_app_key() {
-  [[ -f "$ENV_FILE" ]] || return 0
-  sed -n 's/^APP_KEY=//p' "$ENV_FILE" | tail -n 1
+# Exits unless running as root, showing how to rerun the same command with sudo
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "This command requires administrator privileges (sudo)." >&2
+    die "Run it again with: sudo $(basename "$0") $ARGS"
+  fi
+  require_trusted_install
+}
+
+# Steps after 10-user call this: they need the user (and USER_UID/RUNTIME_DIR) to exist
+require_user() {
+  [[ -n "${USER_UID:-}" ]] || die "User $USER_NAME does not exist; step 10-user must run first."
 }
 
 # Writes a new random APP_KEY to .env (root-only, mode 600); refuses to replace an existing one without -f
@@ -79,6 +80,67 @@ key_generate() {
   echo "APP_KEY generated in $ENV_FILE."
 }
 
+# Loads user/index.sh and calls its main with the action and the remaining arguments (options and username)
+user_action() {
+  require_root
+  bash "./user/main.sh" "$@"
+}
+
+# Refuse directly use
+refuse_directly_use() {
+  local parent="$1"
+  PARENT_SCRIPT="$(readlink -f "/proc/$PPID/fd/255" 2>/dev/null || true)"
+  [[ "$PARENT_SCRIPT" -ef "$parent" ]] || {
+    echo "Do not run $(basename "$0") directly. Use: sudo vps-deploy user:<action>" >&2
+    exit 1
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DEPLOY_GROUP=deploy
+
+# Prints the message to stderr and exits with status 1
+
+
+
+
+
+
+
+
+# Prints the current APP_KEY value without sourcing .env (which would run any code in it)
+read_app_key() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n 's/^APP_KEY=//p' "$ENV_FILE" | tail -n 1
+}
+
+
+
 # Reads APP_KEY without sourcing .env (which would run any code in it)
 load_app_key() {
   command -v openssl >/dev/null || die "openssl is required to sign users."
@@ -88,11 +150,7 @@ load_app_key() {
     || die "APP_KEY in $ENV_FILE is missing or invalid. Generate it with: sudo ./run.sh key:generate"
 }
 
-# Loads user/index.sh and calls its main with the action and the remaining arguments (options and username)
-user_action() {
-  require_root
-  bash "./user/main.sh" "$@"
-}
+
 
 # HMAC-SHA256 of "name:uid" with APP_KEY: ties the user to this installation and to its UID
 user_signature() {
@@ -104,11 +162,6 @@ user_signature() {
 user_sign() {
   getent group "$DEPLOY_GROUP" >/dev/null || groupadd "$DEPLOY_GROUP"
   usermod -aG "$DEPLOY_GROUP" -c "$SIGNATURE_PREFIX $(user_signature)" "$USER_NAME"
-}
-
-# Steps after 10-user call this: they need the user (and USER_UID/RUNTIME_DIR) to exist
-require_user() {
-  [[ -n "${USER_UID:-}" ]] || die "User $USER_NAME does not exist; step 10-user must run first."
 }
 
 # Runs a command as the target user inside their systemd user session
@@ -148,18 +201,6 @@ Suites: $codename
 Components: stable
 Signed-By: $DOCKER_KEYRING
 EOF
-}
-
-# Refuse directly use
-refuse_directly_use() {
-  TOOL_DIR="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/..")"
-
-  # bash keeps the script it runs open on fd 255: the parent must be this tool's run.sh
-  PARENT_SCRIPT="$(readlink -f "/proc/$PPID/fd/255" 2>/dev/null || true)"
-  [[ "$PARENT_SCRIPT" == "$TOOL_DIR/run.sh" ]] || {
-    echo "Do not run $(basename "$0") directly. Use: sudo vps-deploy user:<action>" >&2
-    exit 1
-  }
 }
 
 # Succeeds when the user is in the deploy group and its signature matches APP_KEY

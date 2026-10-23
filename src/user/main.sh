@@ -3,25 +3,28 @@
 # Runs each script in steps/<action>/ in numeric order.
 set -euo pipefail
 
-BASE_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-cd "$BASE_DIR"
+# Folder of this script, following symlinks
+EXEC_DIR="$(dirname "$(readlink -f "$0")")"
+BASE_DIR="$(dirname "$(readlink -f "$0")")/.."
 
-# shellcheck sources=lib/*.sh
+
+# Loads the POSIX bash guard with `.` (not source)
+# and stops under sh/dash or POSIX-mode bash
+. "$BASE_DIR/lib/bash.sh" && require_bash
+
+# Runs from the tool's folder, so its files load by
+# relative path (./lib/..., ./user/...)
+cd $EXEC_DIR
+
+# Loads the help text (usage) and the shared helpers;
+# both are bash-only, safe once require_bash passed
 source ../lib/usage.sh
 source ../lib/common.sh
 
-# Refuse sh/dash (and bash in POSIX mode): this file needs bash. Keep this block POSIX-compatible.
-if [ -z "${BASH_VERSION:-}" ] || case ":${SHELLOPTS:-}:" in *:posix:*) true ;; *) false ;; esac; then
-  echo "Run it as ./$(basename "$0") (it requires bash)." >&2
-  exit 1
-fi
-
-refuse_directly_use
+refuse_directly_use "$BASE_DIR/run.sh"
 
 ACTIONS=(create delete)
-SIGNATURE_PREFIX=vps.deploy
 
-ORIGINAL_ARGS="$*"
 ASSUME_YES=0
 POSITIONAL=()
 
@@ -49,7 +52,7 @@ ACTION="${POSITIONAL[0]:-}"
   exit 1;
 }
 
-STEPS_DIR="$BASE_DIR/actions/$ACTION/steps"
+STEPS_DIR="$EXEC_DIR/actions/$ACTION/steps"
 
 mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.sh' | sort)
 (( ${#STEPS[@]} > 0 )) || {
@@ -59,10 +62,8 @@ mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.s
 
 USER_NAME="${POSITIONAL[1]:-}"
 [[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
-export USER_NAME ASSUME_YES
 
 HOME_DIR="/home/$USER_NAME"
-export HOME_DIR
 
 # Checked before any step: create signs the user with
 # APP_KEY, delete checks that signature
@@ -79,11 +80,15 @@ for step in "${STEPS[@]}"; do
     echo "Step file $step is empty; reinstall the scripts." >&2;
     exit 1;
   }
-  bash "$step" || {
+  USER_NAME="$USER_NAME" ASSUME_YES="$ASSUME_YES" bash "$step" || {
     echo "Step $ACTION/$name failed; stopping." >&2;
     exit 1;
   }
 done
+
+
+
+
 
 # Calls user_<action> with the remaining arguments (options and username), e.g. create -> user_create
 #main() {
