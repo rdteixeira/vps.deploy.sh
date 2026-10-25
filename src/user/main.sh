@@ -64,6 +64,30 @@ USER_NAME="${POSITIONAL[1]:-}"
 [[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
 
 HOME_DIR="/home/$USER_NAME"
+BASHRC="/home/$USER_NAME/.bashrc"
+OPT_DIR="/home/$USER_NAME/opt"
+APPS_DIR="/home/$USER_NAME/opt/apps"
+
+# Delete is destructive: check the user once and confirm before any step runs
+if [[ "$ACTION" == delete ]]; then
+  if ! getent passwd "$USER_NAME" >/dev/null; then
+    echo "User $USER_NAME does not exist; nothing to delete."
+    exit 0
+  fi
+
+  USER_UID="$(id -u "$USER_NAME")"
+
+  require_managed_user
+
+  echo "WARNING: this stops every service and container of $USER_NAME and permanently removes $HOME_DIR," >&2
+  echo "including every project in $APPS_DIR." >&2
+
+  if (( ! ASSUME_YES )); then
+    [[ -t 0 ]] || die "No terminal available to confirm. Run again with --yes to delete $USER_NAME."
+    read -rp "Type the username ($USER_NAME) to confirm: " answer
+      [[ "$answer" == "$USER_NAME" ]] || die "Aborted; nothing was changed."
+  fi
+fi
 
 # Checked before any step: create signs the user with
 # APP_KEY, delete checks that signature
@@ -80,131 +104,20 @@ for step in "${STEPS[@]}"; do
     echo "Step file $step is empty; reinstall the scripts." >&2;
     exit 1;
   }
-  USER_NAME="$USER_NAME" ASSUME_YES="$ASSUME_YES" bash "$step" || {
+  USER_NAME="$USER_NAME" \
+  HOME_DIR="$HOME_DIR" \
+  BASHRC="$BASHRC" \
+  OPT_DIR="$OPT_DIR" \
+  APPS_DIR="$APPS_DIR" \
+  ASSUME_YES="$ASSUME_YES" \
+  bash "$step" || {
     echo "Step $ACTION/$name failed; stopping." >&2;
     exit 1;
   }
 done
 
-
-
-
-
-# Calls user_<action> with the remaining arguments (options and username), e.g. create -> user_create
-#main() {
-#  local action="${1:-}"
-#  shift || true
-#  [[ " ${USER_ACTIONS[*]} " == *" $action "* ]] && declare -F "user_$action" >/dev/null \
-#    || die "Unknown user action: $action"
-
-#  ORIGINAL_ARGS="$*"
-#  ASSUME_YES=0
-#  POSITIONAL=()
-#  while (( $# )); do
-#    case "$1" in
-#      -y|--yes) ASSUME_YES=1 ;;
-#      -h|--help) usage; exit 0 ;;
-#      -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
-#      *) POSITIONAL+=("$1") ;;
-#    esac
-#    shift
-#  done
-#
-#  # The action was already shifted off above, so the username is the first positional argument
-#  USER_NAME="${POSITIONAL[0]:-}"
-#  [[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
-#  export USER_NAME ASSUME_YES
-#
-#  HOME_DIR="/home/$USER_NAME"
-#  OPT_DIR="$HOME_DIR/opt"
-#  APPS_DIR="$OPT_DIR/apps"
-#
-#  load_app_key
-#
-#
-#
-#  # The options were consumed by the loop above ($@ is empty here); the action reads USER_NAME and ASSUME_YES
-#  echo $action
-#  exit
-#}
-#
-#user_create() {
-#  user_create__user_add
-#  user_create__folder
-#  user_create__docker_packages
-#}
-#
-#user_create__user_add() {
-#  if ! getent passwd "$USER_NAME" > /dev/null; then
-#    useradd --create-home --user-group --shell /usr/sbin/nologin --comment "" "$USER_NAME"
-#    getent passwd "$USER_NAME" >/dev/null || die "adduser finished but $USER_NAME was not created."
-#    USER_UID="$(id -u "$USER_NAME")"
-#    user_sign
-#    echo "User $USER_NAME created and signed (group $DEPLOY_GROUP)."
-#    return 0
-#  fi
-#
-#  USER_UID="$(id -u "$USER_NAME")"
-#  echo "User $USER_NAME already exists — checking/adjusting the structure."
-#}
-#
-#user_create__folder() {
-#  require_user
-#
-#  RUNTIME_DIR="/run/user/$USER_UID"
-#
-#  # .ssh belongs to the user: create it as the user, so a symlink only reaches what they can already change
-#  run_as_user install -d -m 700 "$HOME_DIR/.ssh"
-#
-#  # opt must be root's: never follow a symlink the user put in its place
-#  refuse_symlink "$OPT_DIR"
-#
-#  # Remove the immutable flag (if set) so opt/apps can be adjusted
-#  if [[ -d "$OPT_DIR" ]]; then
-#    chattr -i "$OPT_DIR";
-#  fi
-#
-#  install -d -m 755 -o root -g root "$OPT_DIR"
-#  refuse_symlink "$OPT_DIR"
-#  chown root:root "$OPT_DIR"; chmod 755 "$OPT_DIR"
-#
-#  # opt is root-owned now, so apps can no longer be swapped; it may still be a symlink planted before
-#  refuse_symlink "$APPS_DIR"
-#  install -d -m 755 -o "$USER_NAME" -g "$USER_NAME" "$APPS_DIR"
-#  chattr +i "$OPT_DIR"
-#}
-#
-#user_create__docker_packages() {
-#  require_user
-#
-#  REQUIRED_PKGS=(uidmap dbus-user-session docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras)
-#  MISSING_PKGS=()
-#  for pkg in "${REQUIRED_PKGS[@]}"; do
-#    dpkg -s "$pkg" >/dev/null 2>&1 || MISSING_PKGS+=("$pkg")
-#  done
-#
-#  if (( ${#MISSING_PKGS[@]} == 0 )); then
-#    echo "All Docker required packages are installed."
-#    return 0
-#  fi
-#
-#  DOCKER_KEYRING=/etc/apt/keyrings/docker.asc
-#  DOCKER_SOURCES=/etc/apt/sources.list.d/docker.sources
-#
-#  if ! grep -rqs download.docker.com /etc/apt/sources.list /etc/apt/sources.list.d/; then
-#    setup_docker_repo
-#  fi
-#
-#  echo "Installing missing packages: ${MISSING_PKGS[*]}"
-#  apt-get update -qq
-#  if ! apt-get install -y -qq "${MISSING_PKGS[@]}"; then
-#    echo "Could not install ${MISSING_PKGS[*]}." >&2
-#    die "Check Docker's apt repository in $DOCKER_SOURCES (or wherever it is configured)."
-#  fi
-#
-#  # docker-ce starts the system-wide (rootful) daemon on install; only the rootless ones are used
-#  if [[ " ${MISSING_PKGS[*]} " == *" docker-ce "* ]]; then
-#    echo "Disabling the system-wide (rootful) Docker daemon."
-#    systemctl disable --now docker.service docker.socket
-#  fi
-#}
+echo
+case "$ACTION" in
+  create) echo "Done. To access the user: sudo -u $USER_NAME bash" ;;
+  delete) echo "Done. User $USER_NAME was removed." ;;
+esac

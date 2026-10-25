@@ -8,9 +8,9 @@ Bash tool, run as root, that prepares an Ubuntu/Debian VPS to host projects:
 - **rootless Docker** for that user (system-wide daemon disabled, user daemon kept alive with linger);
 - a root-owned, immutable `~/opt` and a user-owned `~/opt/apps/<project>` per git repository.
 
-> Work in progress: the tool is being moved into `src/` (what `install.sh` installs). The legacy
-> scripts at the repository root are still the complete implementation; `repo:add` and the
-> `user:delete` steps exist only there for now.
+> Work in progress: the tool now lives in `src/` (what `install.sh` installs), where `key:generate`,
+> `user:create` and `user:delete` work. `repo:add` was removed with the legacy scripts and is not
+> available until it is migrated.
 
 ## Requirements
 
@@ -44,19 +44,18 @@ sudo vps-deploy user:create [-y] [name]  # create (or adjust) the user with root
 sudo vps-deploy user:delete [-y] [name]  # stop its services and containers, remove the user and its home
 ```
 
-Legacy commands, run from a root-owned copy of the repository:
-
-```bash
-sudo ./run.sh repo:add <user> <name> <git-url>   # /home/<user>/opt/apps/<name> as a git repo with <git-url> as origin
-```
-
 Without a name, `user:create` / `user:delete` ask for it. `-y` skips the confirmations (changing an
-existing user's login shell, deleting a user).
+existing user's login shell; typing the username to confirm a delete).
+
+`user:delete` checks the user before touching anything (it must exist, be signed, have the nologin
+shell and not be the user running `sudo`), then disables linger, stops the user's systemd instance
+(rootless Docker and its containers included) and any process left, removes the user, its home with
+every project in it and its subordinate id ranges, and checks that nothing is left.
 
 ## Security model
 
 - **Signed users.** `user:create` adds the user to the `deploy` group and stores an HMAC-SHA256 of
-  `name:uid` (keyed with `APP_KEY`) in its comment field. `user:delete` and `repo:add` refuse users
+  `name:uid` (keyed with `APP_KEY`) in its comment field. `user:delete` refuses users
   without a valid signature, users with a login shell, and the user running `sudo`.
   Replacing `APP_KEY` (`key:generate -f`) makes the existing users impossible to delete with the tool.
 - **Root never follows the user's paths.** Files the user owns in their home (`.bashrc`, `.ssh`) are
@@ -74,12 +73,11 @@ Installed modes: tool folder `711`, `run.sh` `705`, `lib/` `705` with its files 
 
 ```
 install.sh          installs src/ into /opt/vps.deploy
-src/                new implementation
+src/                the tool
   run.sh            entry point (vps-deploy)
   lib/              bash.sh (bash guard), usage.sh, common.sh (shared helpers, signature, trust check)
-  user/main.sh      user actions, runnable only from run.sh
-  user/actions/<action>/steps/NN-*.sh   steps of each action, runnable only from user/main.sh
-run.sh, lib/, user/, repo/   legacy implementation (steps/<action>/NN-*.sh, run in numeric order)
+  user/main.sh      user actions (create, delete), runnable only from run.sh
+  user/actions/<action>/steps/NN-*.sh   steps of each action, run in numeric order, only from user/main.sh
 docs/readme/        translations of this README
 ```
 

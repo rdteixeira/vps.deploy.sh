@@ -1,6 +1,6 @@
 [English](../../README.md) | Português (Brasil) | [Español (Paraguay)](README.es-PY.md)
 
-> Tradução de [`README.md`](../../README.md) no commit 24580a8.
+> Tradução de [`README.md`](../../README.md) no commit 51dc3f7.
 
 # vps.deploy.sh
 
@@ -10,9 +10,9 @@ Ferramenta em Bash, executada como root, que prepara uma VPS Ubuntu/Debian para 
 - **Docker rootless** para esse usuário (o daemon do sistema é desligado e o do usuário fica ativo com linger);
 - um `~/opt` imutável, do root, e um `~/opt/apps/<projeto>`, do usuário, para cada repositório git.
 
-> Em andamento: a ferramenta está sendo movida para `src/` (o que o `install.sh` instala). Os scripts
-> antigos na raiz do repositório ainda são a implementação completa; por enquanto, `repo:add` e os
-> passos do `user:delete` só existem lá.
+> Em andamento: a ferramenta agora fica em `src/` (o que o `install.sh` instala), onde `key:generate`,
+> `user:create` e `user:delete` funcionam. O `repo:add` foi removido junto com os scripts antigos e
+> não está disponível até ser migrado.
 
 ## Requisitos
 
@@ -46,20 +46,20 @@ sudo vps-deploy user:create [-y] [nome]  # cria (ou ajusta) o usuário com Docke
 sudo vps-deploy user:delete [-y] [nome]  # para os serviços e containers, remove o usuário e o home
 ```
 
-Comandos da versão antiga, executados a partir de uma cópia do repositório com dono root:
-
-```bash
-sudo ./run.sh repo:add <usuário> <nome> <git-url>   # /home/<usuário>/opt/apps/<nome> como repositório git com <git-url> como origin
-```
-
 Sem o nome, `user:create` e `user:delete` perguntam por ele. O `-y` pula as confirmações (trocar o
-shell de login de um usuário existente, apagar um usuário).
+shell de login de um usuário existente; digitar o nome do usuário para confirmar um delete).
+
+O `user:delete` confere o usuário antes de mexer em qualquer coisa (ele precisa existir, estar
+assinado, ter o shell nologin e não ser o usuário que está rodando o `sudo`). Depois desliga o linger,
+para a instância systemd do usuário (incluindo o Docker rootless e os containers) e qualquer processo
+que tenha sobrado, remove o usuário, o home com todos os projetos dentro e as faixas de ids
+subordinados, e confere que nada ficou para trás.
 
 ## Modelo de segurança
 
 - **Usuários assinados.** O `user:create` coloca o usuário no grupo `deploy` e grava no campo de
-  comentário um HMAC-SHA256 de `nome:uid` (com o `APP_KEY` como chave). `user:delete` e `repo:add`
-  recusam usuários sem assinatura válida, com shell de login, e o próprio usuário que está rodando o `sudo`.
+  comentário um HMAC-SHA256 de `nome:uid` (com o `APP_KEY` como chave). O `user:delete`
+  recusa usuários sem assinatura válida, com shell de login, e o próprio usuário que está rodando o `sudo`.
   Trocar o `APP_KEY` (`key:generate -f`) faz com que os usuários existentes não possam mais ser
   apagados pela ferramenta.
 - **O root não segue os caminhos do usuário.** Os arquivos do usuário no home (`.bashrc`, `.ssh`) são
@@ -77,12 +77,11 @@ em `604`, o restante `700`/`600`, `.env` `600`.
 
 ```
 install.sh          instala o src/ em /opt/vps.deploy
-src/                implementação nova
+src/                a ferramenta
   run.sh            ponto de entrada (vps-deploy)
   lib/              bash.sh (exige bash), usage.sh, common.sh (funções comuns, assinatura, checagem de instalação)
-  user/main.sh      ações de usuário, só executáveis a partir do run.sh
-  user/actions/<ação>/steps/NN-*.sh   passos de cada ação, só executáveis a partir do user/main.sh
-run.sh, lib/, user/, repo/   implementação antiga (steps/<ação>/NN-*.sh, executados em ordem numérica)
+  user/main.sh      ações de usuário (create, delete), só executáveis a partir do run.sh
+  user/actions/<ação>/steps/NN-*.sh   passos de cada ação, executados em ordem numérica, só a partir do user/main.sh
 docs/readme/        traduções deste README
 ```
 

@@ -1,6 +1,6 @@
 [English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | Español (Paraguay)
 
-> Traducción de [`README.md`](../../README.md) en el commit 24580a8.
+> Traducción de [`README.md`](../../README.md) en el commit 51dc3f7.
 
 # vps.deploy.sh
 
@@ -10,9 +10,9 @@ Herramienta en Bash, ejecutada como root, que prepara un VPS Ubuntu/Debian para 
 - **Docker rootless** para ese usuario (el daemon del sistema se desactiva y el del usuario queda activo con linger);
 - un `~/opt` inmutable, de root, y un `~/opt/apps/<proyecto>`, del usuario, para cada repositorio git.
 
-> En curso: la herramienta se está moviendo a `src/` (lo que instala `install.sh`). Los scripts
-> antiguos en la raíz del repositorio siguen siendo la implementación completa; por ahora, `repo:add`
-> y los pasos de `user:delete` solo existen allí.
+> En curso: la herramienta ahora está en `src/` (lo que instala `install.sh`), donde `key:generate`,
+> `user:create` y `user:delete` funcionan. `repo:add` se eliminó junto con los scripts antiguos y no
+> está disponible hasta que se migre.
 
 ## Requisitos
 
@@ -46,20 +46,20 @@ sudo vps-deploy user:create [-y] [nombre]  # crea (o ajusta) el usuario con Dock
 sudo vps-deploy user:delete [-y] [nombre]  # detiene servicios y contenedores, elimina el usuario y su home
 ```
 
-Comandos de la versión antigua, ejecutados desde una copia del repositorio con dueño root:
-
-```bash
-sudo ./run.sh repo:add <usuario> <nombre> <git-url>   # /home/<usuario>/opt/apps/<nombre> como repositorio git con <git-url> como origin
-```
-
 Sin el nombre, `user:create` y `user:delete` lo preguntan. `-y` omite las confirmaciones (cambiar el
-shell de inicio de sesión de un usuario existente, eliminar un usuario).
+shell de inicio de sesión de un usuario existente; escribir el nombre del usuario para confirmar un delete).
+
+`user:delete` verifica el usuario antes de tocar nada (debe existir, estar firmado, tener el shell
+nologin y no ser el usuario que ejecuta el `sudo`). Después desactiva el linger, detiene la instancia
+systemd del usuario (incluidos el Docker rootless y sus contenedores) y cualquier proceso que haya
+quedado, elimina el usuario, su home con todos los proyectos que contiene y sus rangos de ids
+subordinados, y verifica que no quede nada.
 
 ## Modelo de seguridad
 
 - **Usuarios firmados.** `user:create` agrega el usuario al grupo `deploy` y guarda en el campo de
-  comentario un HMAC-SHA256 de `nombre:uid` (con el `APP_KEY` como clave). `user:delete` y `repo:add`
-  rechazan usuarios sin firma válida, con shell de inicio de sesión, y al propio usuario que ejecuta el `sudo`.
+  comentario un HMAC-SHA256 de `nombre:uid` (con el `APP_KEY` como clave). `user:delete`
+  rechaza usuarios sin firma válida, con shell de inicio de sesión, y al propio usuario que ejecuta el `sudo`.
   Cambiar el `APP_KEY` (`key:generate -f`) hace que los usuarios existentes ya no puedan eliminarse con la herramienta.
 - **Root no sigue las rutas del usuario.** Los archivos del usuario en su home (`.bashrc`, `.ssh`) se
   escriben como el usuario; las rutas de root (`~/opt`, `~/opt/apps`) se rechazan cuando son enlaces simbólicos.
@@ -76,12 +76,11 @@ archivos en `604`, el resto `700`/`600`, `.env` `600`.
 
 ```
 install.sh          instala src/ en /opt/vps.deploy
-src/                implementación nueva
+src/                la herramienta
   run.sh            punto de entrada (vps-deploy)
   lib/              bash.sh (exige bash), usage.sh, common.sh (funciones comunes, firma, verificación de instalación)
-  user/main.sh      acciones de usuario, ejecutables solo desde run.sh
-  user/actions/<acción>/steps/NN-*.sh   pasos de cada acción, ejecutables solo desde user/main.sh
-run.sh, lib/, user/, repo/   implementación antigua (steps/<acción>/NN-*.sh, ejecutados en orden numérico)
+  user/main.sh      acciones de usuario (create, delete), ejecutables solo desde run.sh
+  user/actions/<acción>/steps/NN-*.sh   pasos de cada acción, ejecutados en orden numérico, solo desde user/main.sh
 docs/readme/        traducciones de este README
 ```
 

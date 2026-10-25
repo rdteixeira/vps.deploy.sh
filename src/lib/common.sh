@@ -44,6 +44,23 @@ require_user() {
   [[ -n "${USER_UID:-}" ]] || die "User $USER_NAME does not exist; step 10-user must run first."
 }
 
+# Commands that act on a user (delete, repo:add) only accept users this tool created
+require_signed_user() {
+  require_user
+  load_app_key
+  user_is_signed || die "User $USER_NAME was not created by this tool (not in group $DEPLOY_GROUP," \
+    "or its signature does not match APP_KEY)."
+}
+
+# delete only removes users this tool created (signed, nologin), never the caller
+require_managed_user() {
+  require_user
+  [[ "$USER_NAME" != "${SUDO_USER:-}" ]] || die "User $USER_NAME is running this command and cannot be deleted."
+  [[ "$(getent passwd "$USER_NAME" | cut -d: -f7)" == /usr/sbin/nologin ]] \
+    || die "User $USER_NAME has a login shell; only nologin users (made by create) can be deleted."
+  require_signed_user
+}
+
 # Writes a new random APP_KEY to .env (root-only, mode 600); refuses to replace an existing one without -f
 key_generate() {
   local force=0
@@ -96,7 +113,39 @@ refuse_directly_use() {
   }
 }
 
+# Adds Docker's official apt repository (docker-ce and friends are not in the distro's repos)
+setup_docker_repo() {
+  local distro codename
+  distro="$(. /etc/os-release && echo "$ID")"
+  case "$distro" in
+    ubuntu) codename="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" ;;
+    debian) codename="$(. /etc/os-release && echo "$VERSION_CODENAME")" ;;
+    *) die "Unsupported distribution: $distro. Configure Docker's apt repository manually." ;;
+  esac
+  [[ -n "$codename" ]] || die "Could not detect the $distro release codename."
 
+  echo "Configuring Docker's apt repository ($distro $codename)."
+  apt-get update -qq
+  apt-get install -y -qq ca-certificates curl
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL "https://download.docker.com/linux/$distro/gpg" -o "$DOCKER_KEYRING"
+  chmod a+r "$DOCKER_KEYRING"
+  cat > "$DOCKER_SOURCES" <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/$distro
+Suites: $codename
+Components: stable
+Signed-By: $DOCKER_KEYRING
+EOF
+}
+
+# Runs a command as the target user inside their systemd user session
+run_as_user() {
+  sudo -u "$USER_NAME" \
+    XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus" \
+    "$@"
+}
 
 
 

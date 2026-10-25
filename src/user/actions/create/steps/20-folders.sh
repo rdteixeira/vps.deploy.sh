@@ -24,9 +24,6 @@ source ../../../../lib/common.sh
 refuse_directly_use "$MAIN_DIR/main.sh"
 
 USER_UID="$(id -u "$USER_NAME")"
-HOME_DIR="/home/$USER_NAME"
-OPT_DIR="/home/$USER_NAME/opt"
-APPS_DIR="/home/$USER_NAME/opt/apps"
 RUNTIME_DIR="/run/user/$USER_UID"
 
 require_user
