@@ -18,7 +18,8 @@ Commands:
                                                   with <git-ssh-url> as origin. As root, <user> must have
                                                   been created by user:create; as a deploy user (no sudo),
                                                   omit <user>: the repository is created in your own home
-                                                  -y, --yes    Do not ask before using an existing folder
+                                                  -y, --yes    Use an existing folder without asking and do
+                                                               not wait for the deploy key to be added
 
 Options:
   -h, --help                Show this help
