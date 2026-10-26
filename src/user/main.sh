@@ -7,7 +7,6 @@ set -euo pipefail
 EXEC_DIR="$(dirname "$(readlink -f "$0")")"
 BASE_DIR="$(dirname "$(readlink -f "$0")")/.."
 
-
 # Loads the POSIX bash guard with `.` (not source)
 # and stops under sh/dash or POSIX-mode bash
 . "$BASE_DIR/lib/bash.sh" && require_bash

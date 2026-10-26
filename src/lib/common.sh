@@ -18,8 +18,12 @@ die() {
 require_trusted_install() {
   local root bad dir
   root="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/..")"
+
+  # Without root, the 700 folders cannot be listed: their own owner and mode are still checked,
+  # and only root can change what is inside them
   bad="$(find "$root" \( -path "$root/.git" -o -path "$root/.idea" \) -prune \
-    -o \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit)"
+      -o \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit 2>/dev/null || true)"
+
   [[ -z "$bad" ]] || die "$bad is not owned by root or is writable by group/others." \
     "Install the tool as root: sudo chown -R root:root $root && sudo chmod -R go-w $root"
   dir="$root"
@@ -103,6 +107,13 @@ user_action() {
   bash "./user/main.sh" "$@"
 }
 
+# Runs repo/main.sh as a child process (not exec: refuse_directly_use checks the parent);
+# no require_root: repo/main.sh picks the admin or the user mode from EUID
+repo_action() {
+  require_trusted_install
+  bash "./repo/main.sh" "$@"
+}
+
 # Refuse directly use
 refuse_directly_use() {
   local parent="$1"
@@ -145,6 +156,33 @@ run_as_user() {
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus" \
     "$@"
+}
+
+# Runs a command as the deploy user: through sudo -u in admin mode (root), directly in user mode
+as_user() {
+  if (( EUID == 0 )); then
+    sudo -u "$USER_NAME" -H "$@"
+  else
+    "$@"
+  fi
+}
+
+# Runs git as the deploy user inside REPO_DIR, never prompting for credentials
+repo_git() {
+  as_user env GIT_TERMINAL_PROMPT=0 git -C "$REPO_DIR" "$@"
+}
+
+# Succeeds when origin accepts the deploy key; retries network errors (timeouts, resets), but not
+# "Permission denied" / "not found", which mean the key is not added to the repository yet
+repo_reachable() {
+  local err
+  for _ in 1 2 3; do
+    err="$(repo_git ls-remote -q origin 2>&1 >/dev/null)" && return 0
+    [[ "$err" == *"Permission denied"* || "$err" == *"not found"* ]] && return 1
+    sleep 2
+  done
+  echo "$err" >&2
+  return 1
 }
 
 

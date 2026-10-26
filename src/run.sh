@@ -35,5 +35,6 @@ case "$COMMAND" in
   key:generate) key_generate "$@" ;;
   user:create) user_action create "$@" ;;
   user:delete) user_action delete "$@" ;;
+  repo:create) repo_action create "$@" ;;
   *) echo "Unknown command: $COMMAND" >&2; usage >&2; exit 1 ;;
 esac

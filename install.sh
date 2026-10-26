@@ -41,6 +41,10 @@ chmod 705 "$DEST_DIR/run.sh"
 chmod 705 "$DEST_DIR/lib"
 find "$DEST_DIR/lib" -type f -exec chmod 604 {} +
 
+# repo is readable by anyone too: deploy users run repo:create without sudo
+find "$DEST_DIR/repo" -type d -exec chmod 705 {} +
+find "$DEST_DIR/repo" -type f -exec chmod 604 {} +
+
 # `sudo vps-deploy <command>` from anywhere (run.sh resolves its own path through the link)
 rm -f "$BIN_LINK"
 ln -s "$DEST_DIR/run.sh" "$BIN_LINK"
