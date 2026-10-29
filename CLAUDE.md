@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `vps.deploy.sh` is a Bash tool, run as root, that prepares a VPS (Ubuntu/Debian) to host projects:
 one **nologin deploy user per owner**, with rootless Docker, a root-owned immutable `~/opt` and a
-user-owned `~/opt/apps/<project>` per git repository, each with its own read-only deploy key.
-Everything is plain Bash (`set -euo pipefail`), no dependencies beyond coreutils, `openssl`, `rsync`,
-`git`, `openssh-client`, apt and systemd.
+user-owned `~/opt/apps/<project>` per git repository, each with its own read-only deploy key. A CI
+account (`github`, a prerequisite the tool never creates) gets one sudo rule per deploy user: run that
+user's immutable entry point as that user, nothing else. Everything is plain Bash (`set -euo pipefail`),
+no dependencies beyond coreutils, `openssl`, `rsync`, `git`, `openssh-client`, `acl`, sudo, apt and systemd.
 
 ## Layout: migration in progress
 
@@ -22,12 +23,14 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   `bash ./repo/main.sh <action> ...` (after `require_trusted_install` only: `repo/main.sh` itself picks
   the mode from `EUID`). Both are child processes, **not** `exec`.
 - `src/user/main.sh` parses options (`ACTIONS=(create delete)`), reads the username, sets
-  `HOME_DIR`/`BASHRC`/`OPT_DIR`/`APPS_DIR` and calls `load_app_key`. For `delete` it first checks the user
-  once, before any step: exits 0 if the user does not exist, sets `USER_UID`, calls `require_managed_user`
-  and, without `-y`, asks to type the username (dies without a terminal). It runs
+  `HOME_DIR`/`BASHRC`/`OPT_DIR`/`APPS_DIR` and `CI_USER=github` (the only place the CI account is named),
+  and calls `load_app_key`. For `delete` it first checks the user once, before any step: exits 0 if the
+  user does not exist, sets `USER_UID`, calls `require_managed_user` and, without `-y`, asks to type the
+  username (dies without a terminal). For `create` it dies before any step if `CI_USER` does not exist
+  (`create/85-entrypoint` needs it; otherwise the user would be left half made). It runs
   `src/user/actions/<action>/steps/NN-*.sh` in numeric order with `USER_NAME`, `HOME_DIR`, `BASHRC`,
-  `OPT_DIR`, `APPS_DIR` and `ASSUME_YES` passed as environment prefixes (`USER_NAME=... ... bash "$step"`;
-  nothing is exported) and prints a final `Done.` line per action.
+  `OPT_DIR`, `APPS_DIR`, `CI_USER`, `USER_UID` (empty for `create`) and `ASSUME_YES` passed as environment
+  prefixes (`USER_NAME=... ... bash "$step"`; nothing is exported) and prints a final `Done.` line per action.
 - `src/repo/main.sh` (`ACTIONS=(create)`) has two modes:
   - **admin** (`EUID` 0): `repo:create [-y] <user> <name> <git-ssh-url>`; the user must exist and pass
     `require_signed_user` (`USER_UID` set first);
@@ -45,24 +48,43 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   `ASSUME_YES` as environment prefixes.
 - Each step `cd`s to its folder, re-sources `../../../../lib/{usage,common}.sh` and calls
   `refuse_directly_use "$MAIN_DIR/main.sh"`. User steps compute `USER_UID` (and `RUNTIME_DIR` when needed)
-  themselves with `id -u`, because the user may not exist before `create/10-user` (and is gone after
+  themselves with `id -u`, overwriting the one `main.sh` passes, because the user may not exist before
+  `create/10-user`; only `delete/90-verify` uses the passed `USER_UID` (the user is gone after
   `delete/20-user`).
 - `user/actions/create/steps/`: `10-user` (`useradd` + `user_sign`, or shell check of an existing user),
   `20-folders` (`~/.ssh` as the user, `~/opt` root + `chattr +i`, `~/opt/apps` user, `refuse_symlink`
-  before each root operation), `30-docker-packages` (only the missing packages; `setup_docker_repo` with
-  `DOCKER_KEYRING`/`DOCKER_SOURCES` set by the step; disables the rootful daemon), `40-subids` (dies if
+  before each root operation), `30-docker-packages` (only the missing packages, `acl` included for
+  `85-entrypoint`; `setup_docker_repo` with `DOCKER_KEYRING`/`DOCKER_SOURCES` set by the step, also when
+  only non-Docker packages are missing and the repo is not configured; disables the rootful daemon when it
+  installs `docker-ce`), `40-subids` (dies if
   `/etc/subuid` or `/etc/subgid` has no range), `50-apparmor`, `60-linger` (`loginctl enable-linger`, then
   `systemctl start user@<uid>.service` and waits until `systemctl --user show-environment` answers:
   `enable-linger` does not restart a manager stopped by `pkill`/manual `userdel`, and a stale
   `$RUNTIME_DIR/bus` socket can survive, so testing the socket with `-S` is not enough),
-  `70-docker-rootless`, `80-shell-env` (appends to `$BASHRC` only via `run_as_user`), `90-verify`.
+  `70-docker-rootless`, `80-shell-env` (appends to `$BASHRC` only via `run_as_user`), `85-entrypoint`
+  (dies if the user is `CI_USER`, if `CI_USER` is missing or if `setfacl`/`visudo` are missing; requires
+  `CI_HOME` to be a real folder in a root-owned one; makes `ENTRYPOINT_DIR=<CI_HOME>/entrypoints`
+  `root:root 0711` + `chattr +i`, or checks that an existing one is root-owned and re-applies `+i`;
+  `setfacl -m u:<user>:x <CI_HOME>` so the user can cross it after sudo switches; writes
+  `entrypoint_<user>.sh` from a quoted heredoc, today only a skeleton (shebang, comment,
+  `set -euo pipefail`), as `<user>:root 0500` + `chattr +i`: an existing one is rewritten in place, a new
+  one needs `chattr -i` on the folder for a moment; then checks the folder (root, `+i`), the file (owner,
+  mode, `+i`, `cmp` with the generated content) and only then writes `/etc/sudoers.d/vps-deploy-<user>`
+  (`<CI_USER> ALL=(<user>) NOPASSWD: <entrypoint>`) through a `.vps-deploy.XXXXXX` temp file in
+  `sudoers.d` (ignored by sudo for its `.`), `visudo -c -f`, `chmod 0440`, `mv -f`), `90-verify` (also
+  prints `stat`/`lsattr` of the entry point folder and file, the user's ACL on `CI_HOME` and the line of
+  `sudo -l -U <CI_USER>`; the `grep`s fail the step when one is missing).
 - `user/actions/delete/steps/`: `10-services` (`require_managed_user` again, `loginctl disable-linger`,
   `systemctl stop user@<uid>.service` so `docker.service` stops the containers gracefully,
-  `loginctl terminate-user`, `pkill -KILL`, waits up to 10 s until no process is left), `20-user`
+  `loginctl terminate-user`, `pkill -KILL`, waits up to 10 s until no process is left), `15-entrypoint`
+  (`require_managed_user` again; removes the sudoers file first; if `CI_USER` exists and the entry point
+  folder is root-owned, `chattr -i` file and folder, `rm`, `chattr +i` folder, otherwise only warns;
+  `setfacl -x u:<user>` on `CI_HOME` while the name still resolves, i.e. before `20-user`), `20-user`
   (`require_managed_user` again, `chattr -i ~/opt` only if it is a directory and not a symlink,
   `userdel -r`, removes leftover `/etc/subuid`/`/etc/subgid` lines), `90-verify` (no `id -u` nor
-  `require_managed_user`, the user is gone: checks that the user, the home, the linger file and the
-  subordinate ranges are gone).
+  `require_managed_user`, the user is gone: checks that the user, the home, the linger file, the
+  subordinate ranges, the sudoers file and the entry point are gone, and with `getfacl -cpn` that no ACL
+  is left for the `USER_UID` passed by `main.sh`).
 - `repo/actions/create/steps/` (every one idempotent; all git and file work runs as the user):
   `10-folder` (`refuse_symlink`, `install -d` as the user), `20-init` (`git init` if there is no `.git`),
   `30-remote` (adds `origin`; same URL is a no-op, a different one dies, never overwritten),
@@ -86,7 +108,9 @@ folder with `/..`), `MAIN_DIR` (`src/user` or `src/repo`, set by the steps), `EN
 holds `APP_KEY`), `ARGS`/`COMMAND` (set by `common.sh` from the caller's arguments), `ACTION`/`STEPS_DIR`,
 `USER_NAME`, `USER_UID`, `RUNTIME_DIR` (`/run/user/<uid>`), `HOME_DIR`/`OPT_DIR`/`APPS_DIR`, `BASHRC`
 (`~/.bashrc`), `ASSUME_YES`, `REPO_NAME`/`REPO_URL`/`REPO_HOST`/`REPO_DIR` (`~/opt/apps/<name>`),
-`DEPLOY_KEY` (`~/.ssh/deploy_<name>`), `DEPLOY_KEYS_URL`, `DEPLOY_GROUP=deploy`,
+`DEPLOY_KEY` (`~/.ssh/deploy_<name>`), `DEPLOY_KEYS_URL`, `CI_USER` (`github`, from `user/main.sh`),
+`CI_HOME`/`ENTRYPOINT_DIR`/`ENTRYPOINT`/`SUDOERS_FILE` (set by `85-entrypoint` and `delete/15-entrypoint`),
+`DEPLOY_GROUP=deploy`,
 `SIGNATURE_PREFIX=vps.deploy` (the removed legacy code used `vps.deploy.sh`; users signed by it are not
 recognized by `src/`).
 
@@ -101,8 +125,9 @@ which mean the key is not added yet).
 sudo ./install.sh                       # rsync src/ to /opt/vps.deploy (--delete, skips .git/.idea/.env), fix modes, link /usr/local/sbin/vps-deploy, key:generate on first install only
 sudo vps-deploy --help
 sudo vps-deploy key:generate [-f]       # APP_KEY in .env (root, 600); -f breaks deletion of users signed with the old key
-sudo vps-deploy user:create [-y] [name] # steps create/10-user to 90-verify
-sudo vps-deploy user:delete [-y] [name] # checks + confirmation in main.sh, then steps delete/10-services, 20-user, 90-verify
+sudo vps-deploy user:create [-y] [name] # needs the github user; steps create/10-user to 85-entrypoint, 90-verify
+sudo vps-deploy user:delete [-y] [name] # checks + confirmation in main.sh, then steps delete/10-services, 15-entrypoint, 20-user, 90-verify
+sudo -u github sudo -n -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>   # what the CI runs (skeleton today)
 sudo vps-deploy repo:create [-y] [user] [name] [git-ssh-url]   # admin mode, signed users only
 sudo -u <user> bash -c 'cd ~ && vps-deploy repo:create [-y] [name] [git-ssh-url]'   # user mode (deploy group)
 bash -n <file>                          # syntax check (shellcheck is not installed on the dev host)
@@ -136,6 +161,19 @@ bash -n <file>                          # syntax check (shellcheck is not instal
   `IdentitiesOnly=yes` (no other key of the user is offered) and `BatchMode=yes` (never prompts). The
   `core.sshCommand` string is duplicated in `50-deploy-key` and `90-verify`: change both. Steps never
   override it with `git -c core.sshCommand=...`, which would drop the `-i`.
+- **CI entry point**: the CI account may run exactly one command as each deploy user, its entry point,
+  and can neither read, change nor delete it; the user cannot change or delete it either.
+  - The file is `<user>:root 0500` + `chattr +i` (without `+i` its owner could `chmod u+w`).
+  - It lives in `<CI_HOME>/entrypoints`, `root:root 0711` + `chattr +i`, never directly in `CI_HOME`: the
+    owner of a folder can rename or delete anything in it, and the CI account owns its home. `CI_HOME`
+    itself must sit in a root-owned folder.
+  - The sudoers rule is written last, only after the folder and the file are checked, and it is validated
+    with `visudo -c -f` before being moved in. It allows any arguments: the entry point must validate them.
+  - Race: creating a new entry point needs `chattr -i` on the folder for a moment, in which the CI account
+    could rename it; the final checks catch it and no sudo is granted. A folder outside `CI_HOME` (e.g.
+    `/usr/local/lib/vps-deploy/entrypoints`) would have no race and need no ACL.
+  - `delete/15-entrypoint` revokes the sudoers file first and removes the ACL before `userdel` (afterwards
+    the name no longer resolves); without it a user recreated with the same name would get the old rule.
 - **No data loss in `repo:create`**: `30-remote` never replaces another `origin`; `60-fetch` never uses
   `checkout -B`, `reset` or `--force`, and leaves a repository with commits untouched.
 - **Trusted install** (V3): `require_trusted_install` (called by `require_root`, and by `repo_action`
@@ -171,13 +209,17 @@ bash -n <file>                          # syntax check (shellcheck is not instal
 - `require_user` says "step 10-user must run first", which is misleading when `delete` or `repo:create`
   is the caller.
 - `cd $EXEC_DIR` is unquoted in `src/run.sh` and `src/user/main.sh`.
-- The `cd` comment of `src/repo/main.sh` and `repo/actions/create/steps/40-known-hosts.sh` ("Runs from
-  the tool's folder ... ./lib/..., ./user/...") is copied from `run.sh`; they `cd` to their own folder.
+- The `cd` comment "Runs from the tool's folder ... (./lib/..., ./user/...)" is copied from `run.sh` into
+  both `main.sh`, every `user/` step except the `entrypoint` ones, and `repo/.../40-known-hosts.sh`; they
+  `cd` to their own folder.
 - The header comment of `src/user/actions/create/steps/30-docker-packages.sh` is copied from `20-folders.sh`
-  ("Creates ~/.ssh and ~/opt/apps"), and the one of `90-verify.sh` from `80-shell-env.sh`.
-- Many `src/` scripts lack the final newline (`install.sh`, `src/run.sh`, `src/lib/*.sh`,
-  `src/user/main.sh`, every `user/` step except `create/20-folders`, `create/80-shell-env` and
-  `create/90-verify`; all of `src/repo/` has it); check with `tail -c1 <file> | od -c`.
+  ("Creates ~/.ssh and ~/opt/apps").
+- `create/70-docker-rootless` tests `-f ~/.config/systemd/user/docker.service` as root, a user-controlled
+  path (harmless, a symlink only fools the test; should be `run_as_user test -f`).
+- The CI account is `github` in the comment of `85-entrypoint.sh` and in the docs; the code uses `CI_USER`.
+- Many `src/` scripts lack the final newline: `install.sh`, `src/run.sh`, `src/lib/*.sh`,
+  `src/user/main.sh`, `create/{10-user,30-docker-packages,40-subids,50-apparmor,60-linger,70-docker-rootless}`
+  and `delete/{10-services,20-user}` (all of `src/repo/` has it); check with `tail -c1 <file> | od -c`.
 
 ## Code style
 
@@ -204,7 +246,10 @@ there, or `wsl -u root -e bash <script>` from Windows (inline `bash -c` loops ge
 quoting: write a script file instead). The signed test user `user` was used for `repo:create` with the
 project `project` (origin `git@github.com:rdteixeira/vps.deploy.sh.git`). Network to GitHub on
 port 22 is slow and flaky there (1.7–4.7 s per `ls-remote`, occasional timeouts; `gitlab.com:22` was
-unreachable), which is why `ssh-keyscan` and `repo_reachable` retry.
+unreachable), which is why `ssh-keyscan` and `repo_reachable` retry. WSL runs **sudo-rs** (0.2.13):
+`visudo -c -f` returns 0/1 and `sudo -l -U` works; `@includedir /etc/sudoers.d` is on. `user:create` needs
+the CI account first: `sudo useradd -m -s /bin/bash github` (not there by default); `acl` comes from
+`create/30-docker-packages`.
 
 In both: use throwaway names (`teste`) and fake targets (`/etc/vps-alvo`, `/srv/vps-alvo`) for exploit
 tests, and clean up with `user:delete` (never with a manual `pkill`/`userdel`, which leaves linger and a

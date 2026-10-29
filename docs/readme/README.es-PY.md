@@ -1,6 +1,6 @@
 [English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | Español (Paraguay)
 
-> Traducción de [`README.md`](../../README.md) en el commit 51dc3f7.
+> Traducción de [`README.md`](../../README.md) en el commit 99c089d.
 
 # vps.deploy.sh
 
@@ -9,16 +9,25 @@ Herramienta en Bash, ejecutada como root, que prepara un VPS Ubuntu/Debian para 
 - un **usuario de deploy por dueño**: sin contraseña, con shell `/usr/sbin/nologin` y firmado por esta instalación;
 - **Docker rootless** para ese usuario (el daemon del sistema se desactiva y el del usuario queda activo con linger);
 - un `~/opt` inmutable, de root, y un `~/opt/apps/<proyecto>`, del usuario, para cada repositorio git,
-  cada uno con su propia **deploy key** de solo lectura.
+  cada uno con su propia **deploy key** de solo lectura;
+- un **entrypoint** por usuario de deploy, que la cuenta de CI (`github`) puede ejecutar como ese usuario
+  mediante sudo, y nada más.
 
 > En curso: la herramienta ahora está en `src/` (lo que instala `install.sh`), donde `key:generate`,
 > `user:create`, `user:delete` y `repo:create` funcionan. `repo:create` reemplaza al antiguo `repo:add`.
 
 ## Requisitos
 
-Ubuntu o Debian con systemd, `bash`, `openssl`, `rsync`, `git` y `openssh-client` (`ssh-keygen`,
-`ssh-keyscan`). `user:create` instala los paquetes de Docker (`docker-ce`, `docker-ce-rootless-extras`,
-`uidmap`, `dbus-user-session`, ...) desde el repositorio apt oficial de Docker cuando faltan.
+Ubuntu o Debian con systemd, `bash`, `sudo`, `openssl`, `rsync`, `git` y `openssh-client`
+(`ssh-keygen`, `ssh-keyscan`). `user:create` instala los paquetes de Docker (`docker-ce`,
+`docker-ce-rootless-extras`, `uidmap`, `dbus-user-session`, ...) desde el repositorio apt oficial de
+Docker, y `acl`, cuando faltan.
+
+La cuenta de CI `github` debe existir antes de `user:create`; la herramienta nunca la crea:
+
+```bash
+sudo useradd -m -s /bin/bash github
+```
 
 ## Instalación
 
@@ -51,11 +60,21 @@ vps-deploy repo:create [-y] [nombre] [git-ssh-url]                 # como el pro
 Sin el nombre, `user:create` y `user:delete` lo preguntan. `-y` omite las confirmaciones (cambiar el
 shell de inicio de sesión de un usuario existente; escribir el nombre del usuario para confirmar un delete).
 
+`user:create` termina dándole a la cuenta de CI un entrypoint para el nuevo usuario,
+`/home/github/entrypoints/entrypoint_<usuario>.sh`, y una regla de sudo (`/etc/sudoers.d/vps-deploy-<usuario>`)
+que permite a `github` ejecutarlo, y solo a él, como ese usuario. Por SSH, el CI entonces ejecuta:
+
+```bash
+sudo -u <usuario> /home/github/entrypoints/entrypoint_<usuario>.sh <proyecto>
+```
+
+Por ahora el entrypoint es solo un esqueleto (todavía no hace nada); la lógica de deploy viene después.
+
 `user:delete` verifica el usuario antes de tocar nada (debe existir, estar firmado, tener el shell
 nologin y no ser el usuario que ejecuta el `sudo`). Después desactiva el linger, detiene la instancia
 systemd del usuario (incluidos el Docker rootless y sus contenedores) y cualquier proceso que haya
-quedado, elimina el usuario, su home con todos los proyectos que contiene y sus rangos de ids
-subordinados, y verifica que no quede nada.
+quedado, revoca la regla de sudo de la cuenta de CI y elimina el entrypoint, elimina el usuario, su home
+con todos los proyectos que contiene y sus rangos de ids subordinados, y verifica que no quede nada.
 
 `repo:create` prepara `/home/<usuario>/opt/apps/<nombre>` como un clon de `<git-ssh-url>`
 (`git@github.com:dueño/repo.git`, `git@gitlab.com:grupo/proyecto.git` u otra URL `ssh://`). Como
@@ -92,6 +111,10 @@ y no espera la deploy key (como cuando no hay terminal); haga el fetch después,
   llega a guardarse. Cada proyecto tiene su propia clave de solo lectura, usada solo para ese repositorio
   y sin pedir nunca nada; los host keys son fijos, nunca aceptados a ciegas en la primera conexión.
   `repo:create` nunca reemplaza un `origin` ni deshace commits existentes.
+- **Entrypoint del CI.** El entrypoint pertenece al usuario de deploy, tiene modo `0500` y es inmutable
+  (`chattr +i`), en una carpeta `entrypoints/` de root también inmutable: `github` no puede leerlo,
+  modificarlo, ejecutarlo directamente ni borrarlo, y el usuario de deploy tampoco puede modificarlo ni
+  borrarlo. La regla de sudo permite solo ese archivo y se escribe solo después de verificar el archivo y la carpeta.
 - **Secretos.** El `.env` se lee con `sed` y nunca con `source`.
 
 Modos después de la instalación: carpeta de la herramienta `711`, `run.sh` `705`, `lib/` y `repo/` `705`

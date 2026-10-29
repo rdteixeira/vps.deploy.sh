@@ -67,6 +67,10 @@ BASHRC="/home/$USER_NAME/.bashrc"
 OPT_DIR="/home/$USER_NAME/opt"
 APPS_DIR="/home/$USER_NAME/opt/apps"
 
+# CI account (e.g. GitHub Actions over SSH) that may only run each user's entry point;
+# a prerequisite: the tool never creates it
+CI_USER=github
+
 # Delete is destructive: check the user once and confirm before any step runs
 if [[ "$ACTION" == delete ]]; then
   if ! getent passwd "$USER_NAME" >/dev/null; then
@@ -86,6 +90,12 @@ if [[ "$ACTION" == delete ]]; then
     read -rp "Type the username ($USER_NAME) to confirm: " answer
       [[ "$answer" == "$USER_NAME" ]] || die "Aborted; nothing was changed."
   fi
+fi
+
+# create ends with 85-entrypoint, which needs the CI account: fail before changing anything
+if [[ "$ACTION" == create ]]; then
+  getent passwd "$CI_USER" >/dev/null \
+    || die "User $CI_USER (the CI account) does not exist; create it first (e.g. useradd -m -s /bin/bash $CI_USER)."
 fi
 
 # Checked before any step: create signs the user with
@@ -108,6 +118,8 @@ for step in "${STEPS[@]}"; do
   BASHRC="$BASHRC" \
   OPT_DIR="$OPT_DIR" \
   APPS_DIR="$APPS_DIR" \
+  CI_USER="$CI_USER" \
+  USER_UID="${USER_UID:-}" \
   ASSUME_YES="$ASSUME_YES" \
   bash "$step" || {
     echo "Step $ACTION/$name failed; stopping." >&2;

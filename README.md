@@ -7,16 +7,25 @@ Bash tool, run as root, that prepares an Ubuntu/Debian VPS to host projects:
 - one **deploy user per owner**: no password, `/usr/sbin/nologin` shell, signed by this installation;
 - **rootless Docker** for that user (system-wide daemon disabled, user daemon kept alive with linger);
 - a root-owned, immutable `~/opt` and a user-owned `~/opt/apps/<project>` per git repository, each with
-  its own read-only **deploy key**.
+  its own read-only **deploy key**;
+- an **entry point** per deploy user that the CI account (`github`) may run as that user through sudo,
+  and nothing else.
 
 > Work in progress: the tool now lives in `src/` (what `install.sh` installs), where `key:generate`,
 > `user:create`, `user:delete` and `repo:create` work. `repo:create` replaces the legacy `repo:add`.
 
 ## Requirements
 
-Ubuntu or Debian with systemd, `bash`, `openssl`, `rsync`, `git` and `openssh-client` (`ssh-keygen`,
-`ssh-keyscan`). `user:create` installs the Docker packages (`docker-ce`, `docker-ce-rootless-extras`,
-`uidmap`, `dbus-user-session`, ...) from Docker's official apt repository when they are missing.
+Ubuntu or Debian with systemd, `bash`, `sudo`, `openssl`, `rsync`, `git` and `openssh-client`
+(`ssh-keygen`, `ssh-keyscan`). `user:create` installs the Docker packages (`docker-ce`,
+`docker-ce-rootless-extras`, `uidmap`, `dbus-user-session`, ...) from Docker's official apt repository,
+and `acl`, when they are missing.
+
+The CI account `github` must exist before `user:create`; the tool never creates it:
+
+```bash
+sudo useradd -m -s /bin/bash github
+```
 
 ## Install
 
@@ -49,10 +58,21 @@ vps-deploy repo:create [-y] [name] [git-ssh-url]              # as the deploy us
 Without a name, `user:create` / `user:delete` ask for it. `-y` skips the confirmations (changing an
 existing user's login shell; typing the username to confirm a delete).
 
+`user:create` ends by giving the CI account an entry point for the new user,
+`/home/github/entrypoints/entrypoint_<user>.sh`, and a sudo rule (`/etc/sudoers.d/vps-deploy-<user>`)
+that lets `github` run it, and only it, as that user. Over SSH, the CI then runs:
+
+```bash
+sudo -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>
+```
+
+The entry point is only a skeleton for now (it does nothing yet); the deploy logic comes later.
+
 `user:delete` checks the user before touching anything (it must exist, be signed, have the nologin
 shell and not be the user running `sudo`), then disables linger, stops the user's systemd instance
-(rootless Docker and its containers included) and any process left, removes the user, its home with
-every project in it and its subordinate id ranges, and checks that nothing is left.
+(rootless Docker and its containers included) and any process left, revokes the CI account's sudo rule
+and removes the entry point, removes the user, its home with every project in it and its subordinate id
+ranges, and checks that nothing is left.
 
 `repo:create` prepares `/home/<user>/opt/apps/<name>` as a clone of `<git-ssh-url>`
 (`git@github.com:owner/repo.git`, `git@gitlab.com:group/project.git` or another `ssh://` URL). As
@@ -89,6 +109,10 @@ and does not wait for the deploy key (as when there is no terminal); fetch later
   ever stored. Each project has its own read-only key, used only for that repository and never asking
   for anything; host keys are pinned, never accepted blindly on the first connection. `repo:create`
   never replaces an `origin` nor resets existing commits.
+- **CI entry point.** The entry point is owned by the deploy user, mode `0500` and immutable
+  (`chattr +i`), in a root-owned, immutable `entrypoints/` folder: `github` cannot read, change, run
+  directly or delete it, and the deploy user cannot change or delete it either. The sudo rule allows
+  only that file, and is written only after the file and the folder are checked.
 - **Secrets.** `.env` is read with `sed`, never sourced.
 
 Installed modes: tool folder `711`, `run.sh` `705`, `lib/` and `repo/` `705` with their files `604`,

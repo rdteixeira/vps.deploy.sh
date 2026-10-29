@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Checks that nothing of the user is left behind
-# (user, home, linger and subordinate ids).
+# Checks that nothing of the user is left behind (user, home,
+# linger, subordinate ids, sudo rule, entry point and ACL).
 set -euo pipefail
 
 # Folder of this script, following symlinks
@@ -28,4 +28,18 @@ refuse_directly_use "$MAIN_DIR/main.sh"
 [[ ! -e "$HOME_DIR" ]] || die "$HOME_DIR still exists."
 [[ ! -e "/var/lib/systemd/linger/$USER_NAME" ]] || die "Linger is still enabled for $USER_NAME."
 ! grep -q "^$USER_NAME:" /etc/subuid /etc/subgid || die "$USER_NAME still has ranges in /etc/subuid or /etc/subgid."
-echo "Nothing of $USER_NAME is left: user, home, linger and subordinate ids are gone."
+
+# 15-entrypoint: the CI account must have no sudo rule nor entry point left for the user
+[[ ! -e "/etc/sudoers.d/vps-deploy-$USER_NAME" ]] || die "Sudo rule /etc/sudoers.d/vps-deploy-$USER_NAME still exists."
+if getent passwd "$CI_USER" >/dev/null; then
+  CI_HOME="$(getent passwd "$CI_USER" | cut -d: -f6)"
+  [[ ! -e "$CI_HOME/entrypoints/entrypoint_$USER_NAME.sh" ]] \
+    || die "Entry point $CI_HOME/entrypoints/entrypoint_$USER_NAME.sh still exists."
+
+  # The name no longer resolves: look for the ACL by the uid main.sh read before the delete
+  if [[ -n "$USER_UID" ]] && command -v getfacl >/dev/null; then
+    ! getfacl -cpn "$CI_HOME" 2>/dev/null | grep -q "^user:$USER_UID:" \
+      || die "$CI_HOME still has an ACL for uid $USER_UID."
+  fi
+fi
+echo "Nothing of $USER_NAME is left: user, home, linger, subordinate ids, sudo rule, entry point and ACL are gone."

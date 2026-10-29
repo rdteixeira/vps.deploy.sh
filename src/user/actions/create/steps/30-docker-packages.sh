@@ -27,7 +27,8 @@ USER_UID="$(id -u "$USER_NAME")"
 
 require_user
 
-REQUIRED_PKGS=(uidmap dbus-user-session docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras)
+# acl: 85-entrypoint lets the user cross the CI account's home with setfacl
+REQUIRED_PKGS=(uidmap dbus-user-session acl docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras)
 MISSING_PKGS=()
 for pkg in "${REQUIRED_PKGS[@]}"; do
   dpkg -s "$pkg" >/dev/null 2>&1 || MISSING_PKGS+=("$pkg")

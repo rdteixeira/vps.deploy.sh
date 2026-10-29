@@ -12,7 +12,8 @@ BASE_DIR="$(dirname "$(readlink -f "$0")")/../../../.."
 # and stops under sh/dash or POSIX-mode bash
 . "$BASE_DIR/lib/bash.sh" && require_bash
 
-# Runs from this script's folder, so its files load by relative path
+# Runs from this script's folder, so its files
+# load by relative path
 cd "$EXEC_DIR"
 
 # Loads the help text (usage) and the shared helpers;
