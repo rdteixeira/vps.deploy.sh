@@ -8,10 +8,32 @@ ARGS="$*"
 COMMAND="${1:-}"
 SIGNATURE_PREFIX=vps.deploy
 
+# Accounts that are never deploy users: admin, automation, nobody, and the CI account (CI_USER)
+RESERVED_USERS=(root system ubuntu claude nobody)
+
 # Prints the message to stderr and exits with status 1 (ends the whole script, not just the function)
 die() {
   echo "$*" >&2;
   exit 1;
+}
+
+# Dies unless USER_NAME may be a deploy user: a plain name (it becomes /home/<name> and a sudoers
+# entry), not reserved, not the CI account nor the caller, and not an existing system account
+require_valid_user_name() {
+  [[ "$USER_NAME" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid username: \"$USER_NAME\""
+
+  local reserved
+  for reserved in "${RESERVED_USERS[@]}" "${CI_USER:-}"; do
+    [[ "$USER_NAME" != "$reserved" ]] || die "User \"$USER_NAME\" is reserved and cannot be used."
+  done
+
+  [[ "$USER_NAME" != "${SUDO_USER:-}" ]] || die "User \"$USER_NAME\" is running this command and cannot be used."
+
+  # Existing users below UID 1000 are system accounts (www-data, daemon, ...)
+  if getent passwd "$USER_NAME" >/dev/null; then
+    (( $(id -u "$USER_NAME") >= 1000 )) \
+    || die "User \"$USER_NAME\" is a system account (UID $(id -u "$USER_NAME")) and cannot be used."
+  fi
 }
 
 # Scripts run as root: refuses when anyone but root could change them, or swap a folder above them

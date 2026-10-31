@@ -98,6 +98,10 @@ and does not wait for the deploy key (as when there is no terminal); fetch later
 
 ## Security model
 
+- **Only its own users.** `user:create` and `user:delete` refuse invalid names, reserved accounts
+  (`root`, `system`, `ubuntu`, `claude`, `nobody`, the CI account `github`), system accounts (UID < 1000)
+  and the user running `sudo`. `user:create` changes an existing user only if this tool created it
+  (valid signature); any other account, such as one made with `adduser`, is left untouched.
 - **Signed users.** `user:create` adds the user to the `deploy` group and stores an HMAC-SHA256 of
   `name:uid` (keyed with `APP_KEY`) in its comment field. `user:delete` refuses users
   without a valid signature, users with a login shell, and the user running `sudo`; `repo:create` as

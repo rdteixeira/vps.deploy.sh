@@ -100,6 +100,11 @@ espera a deploy key (como quando não há terminal); faça o fetch depois, como 
 
 ## Modelo de segurança
 
+- **Só os próprios usuários.** O `user:create` e o `user:delete` recusam nomes inválidos, contas
+  reservadas (`root`, `system`, `ubuntu`, `claude`, `nobody`, a conta do CI `github`), contas do sistema
+  (UID < 1000) e o usuário que está rodando o `sudo`. O `user:create` só altera um usuário existente se
+  ele foi criado pela ferramenta (assinatura válida); qualquer outra conta, como uma criada com
+  `adduser`, fica intocada.
 - **Usuários assinados.** O `user:create` coloca o usuário no grupo `deploy` e grava no campo de
   comentário um HMAC-SHA256 de `nome:uid` (com o `APP_KEY` como chave). O `user:delete`
   recusa usuários sem assinatura válida, com shell de login, e o próprio usuário que está rodando o `sudo`;

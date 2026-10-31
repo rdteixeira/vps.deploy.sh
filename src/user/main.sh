@@ -62,14 +62,17 @@ mapfile -t STEPS < <(find "$STEPS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.s
 USER_NAME="${POSITIONAL[1]:-}"
 [[ -n "$USER_NAME" ]] || read -rp "Username: " USER_NAME
 
+# CI account (e.g. GitHub Actions over SSH) that may only run each user's entry point;
+# a prerequisite: the tool never creates it
+CI_USER=github
+
+# Before anything uses the name (paths, delete checks, steps): stop on invalid or reserved users
+require_valid_user_name
+
 HOME_DIR="/home/$USER_NAME"
 BASHRC="/home/$USER_NAME/.bashrc"
 OPT_DIR="/home/$USER_NAME/opt"
 APPS_DIR="/home/$USER_NAME/opt/apps"
-
-# CI account (e.g. GitHub Actions over SSH) that may only run each user's entry point;
-# a prerequisite: the tool never creates it
-CI_USER=github
 
 # Delete is destructive: check the user once and confirm before any step runs
 if [[ "$ACTION" == delete ]]; then

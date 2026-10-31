@@ -23,6 +23,8 @@ source ../../../../lib/common.sh
 
 refuse_directly_use "$MAIN_DIR/main.sh"
 
+# Checked again here: each step is its own process and must not trust the caller
+require_valid_user_name
 load_app_key
 
 if ! getent passwd "$USER_NAME" >/dev/null; then
@@ -35,12 +37,13 @@ if ! getent passwd "$USER_NAME" >/dev/null; then
 fi
 
 USER_UID="$(id -u "$USER_NAME")"
-echo "User $USER_NAME already exists — checking/adjusting the structure."
 
-if ! user_is_signed; then
-  echo "NOTE: $USER_NAME was not created by this tool (or APP_KEY changed);"
-  echo "delete will refuse to remove it."
-fi
+# Only users this tool created (signed) are adjusted: any other account (a person's, a service's)
+# would be locked out and left configured but refused by repo:create and user:delete
+user_is_signed || die "User \"$USER_NAME\" exists but was not created by this tool (or APP_KEY changed);" \
+  "refusing to change it. Use a new name."
+
+echo "User $USER_NAME already exists — checking/adjusting the structure."
 
 CURRENT_SHELL="$(getent passwd "$USER_NAME" | cut -d: -f7)"
 case "$CURRENT_SHELL" in

@@ -202,8 +202,12 @@ bash -n <file>                          # syntax check (shellcheck is not instal
   (`/proc/$PPID/fd/255`, compared with `-ef`): each `main.sh` passes `"$BASE_DIR/run.sh"` and each step
   passes `"$MAIN_DIR/main.sh"`, so steps only run from `main.sh` and `main.sh` only from `run.sh`. It
   breaks if `user_action`, `repo_action` or a step loop uses `exec`.
-- **Username checks**: the removed legacy code enforced `^[a-z_][a-z0-9_-]*$`, reserved names
-  (`root system ubuntu claude github nobody`) and UID ≥ 1000 for existing users. Not in `src/` yet.
+- **Username checks**: `require_valid_user_name` (`src/lib/common.sh`) enforces `^[a-z_][a-z0-9_-]*$`,
+  refuses `RESERVED_USERS` (`root system ubuntu claude nobody`) plus `$CI_USER`, the caller
+  (`$SUDO_USER`) and existing users with UID < 1000. `user/main.sh` calls it right after reading the
+  name (`CI_USER` must be set before), and `create/10-user` calls it again. `10-user` also refuses an
+  existing user that is not signed (`user_is_signed`), so `user:create` never adopts or changes an
+  account it did not create (e.g. one made with `adduser`).
 - Pending: V5 (`.idea/` not in `.gitignore`).
 
 ## Known inconsistencies
