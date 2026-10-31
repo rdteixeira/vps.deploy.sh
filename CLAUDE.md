@@ -66,14 +66,24 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   `CI_HOME` to be a real folder in a root-owned one; makes `ENTRYPOINT_DIR=<CI_HOME>/entrypoints`
   `root:root 0711` + `chattr +i`, or checks that an existing one is root-owned and re-applies `+i`;
   `setfacl -m u:<user>:x <CI_HOME>` so the user can cross it after sudo switches; writes
-  `entrypoint_<user>.sh` from a quoted heredoc, today only a skeleton (shebang, comment,
-  `set -euo pipefail`), as `<user>:root 0500` + `chattr +i`: an existing one is rewritten in place, a new
+  `entrypoint_<user>.sh` as a copy of the template `src/user/templates/entrypoint.sh` (must be non-empty
+  and pass `bash -n`), as
+  `<user>:root 0500` + `chattr +i`: an existing one is rewritten in place, a new
   one needs `chattr -i` on the folder for a moment; then checks the folder (root, `+i`), the file (owner,
-  mode, `+i`, `cmp` with the generated content) and only then writes `/etc/sudoers.d/vps-deploy-<user>`
+  mode, `+i`, `cmp` with the template) and only then writes `/etc/sudoers.d/vps-deploy-<user>`
   (`<CI_USER> ALL=(<user>) NOPASSWD: <entrypoint>`) through a `.vps-deploy.XXXXXX` temp file in
   `sudoers.d` (ignored by sudo for its `.`), `visudo -c -f`, `chmod 0440`, `mv -f`), `90-verify` (also
   prints `stat`/`lsattr` of the entry point folder and file, the user's ACL on `CI_HOME` and the line of
   `sudo -l -U <CI_USER>`; the `grep`s fail the step when one is missing).
+- `src/user/templates/entrypoint.sh`: the CI entry point template (deploy logic goes here). It sits
+  outside `steps/`, so `main.sh` never runs it as a step, and installs root-only (`F600`). To roll out a
+  change: edit it, `sudo ./install.sh`, then `sudo vps-deploy user:create -y <user>` for each user.
+  Today it refuses root and anything but exactly one argument, checks `<project>` with the same regex
+  as `repo:create` (no `/`, so it never leaves `~/opt/apps`), sets `HOME` from `getent` (sudo may keep
+  the CI account's, whose `.gitconfig` the user cannot read), `cd`s to `~/opt/apps/<project>`, dies if
+  it has no commits or no upstream (`60-fetch` skips the `--track` checkout while the key is refused or
+  when commits already exist), then `git pull --ff-only --prune` with `GIT_TERMINAL_PROMPT=0` (the deploy
+  key comes from `core.sshCommand`) and prints the old and new short hash.
 - `user/actions/delete/steps/`: `10-services` (`require_managed_user` again, `loginctl disable-linger`,
   `systemctl stop user@<uid>.service` so `docker.service` stops the containers gracefully,
   `loginctl terminate-user`, `pkill -KILL`, waits up to 10 s until no process is left), `15-entrypoint`
@@ -127,7 +137,7 @@ sudo vps-deploy --help
 sudo vps-deploy key:generate [-f]       # APP_KEY in .env (root, 600); -f breaks deletion of users signed with the old key
 sudo vps-deploy user:create [-y] [name] # needs the github user; steps create/10-user to 85-entrypoint, 90-verify
 sudo vps-deploy user:delete [-y] [name] # checks + confirmation in main.sh, then steps delete/10-services, 15-entrypoint, 20-user, 90-verify
-sudo -u github sudo -n -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>   # what the CI runs (skeleton today)
+sudo -u github sudo -n -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>   # what the CI runs (git pull --ff-only today)
 sudo vps-deploy repo:create [-y] [user] [name] [git-ssh-url]   # admin mode, signed users only
 sudo -u <user> bash -c 'cd ~ && vps-deploy repo:create [-y] [name] [git-ssh-url]'   # user mode (deploy group)
 bash -n <file>                          # syntax check (shellcheck is not installed on the dev host)

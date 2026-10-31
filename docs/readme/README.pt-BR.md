@@ -68,7 +68,11 @@ que deixa o `github` rodá-lo, e só ele, como esse usuário. Por SSH, o CI ent�
 sudo -u <usuário> /home/github/entrypoints/entrypoint_<usuário>.sh <projeto>
 ```
 
-Por enquanto o entrypoint é só um esqueleto (ainda não faz nada); a lógica de deploy vem depois.
+Todo entrypoint é uma cópia do modelo `src/user/templates/entrypoint.sh`. Por enquanto ele só
+atualiza o projeto: confere o `<projeto>` (a mesma regra de nome do `repo:create`) e roda
+`git pull --ff-only` em `~/opt/apps/<projeto>`, que nunca faz merge nem descarta alterações locais; o
+build e o restart dos containers vêm depois. Para levar um modelo alterado aos usuários, instale
+de novo e rode `sudo vps-deploy user:create -y <usuário>` para cada usuário.
 
 O `user:delete` confere o usuário antes de mexer em qualquer coisa (ele precisa existir, estar
 assinado, ter o shell nologin e não ser o usuário que está rodando o `sudo`). Depois desliga o linger,
@@ -131,6 +135,7 @@ src/                a ferramenta
   user/main.sh      ações de usuário (create, delete), só executáveis a partir do run.sh
   repo/main.sh      ações de repositório (create), como admin ou como o usuário de deploy, só a partir do run.sh
   {user,repo}/actions/<ação>/steps/NN-*.sh   passos de cada ação, executados em ordem numérica, só a partir do seu main.sh
+  user/templates/   entrypoint.sh, copiado para o entrypoint de CI de cada usuário de deploy
 docs/readme/        traduções deste README
 ```
 

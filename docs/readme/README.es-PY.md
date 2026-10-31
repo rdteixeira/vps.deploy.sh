@@ -68,7 +68,11 @@ que permite a `github` ejecutarlo, y solo a él, como ese usuario. Por SSH, el C
 sudo -u <usuario> /home/github/entrypoints/entrypoint_<usuario>.sh <proyecto>
 ```
 
-Por ahora el entrypoint es solo un esqueleto (todavía no hace nada); la lógica de deploy viene después.
+Todo entrypoint es una copia de la plantilla `src/user/templates/entrypoint.sh`. Por ahora solo
+actualiza el proyecto: verifica el `<proyecto>` (la misma regla de nombre de `repo:create`) y ejecuta
+`git pull --ff-only` en `~/opt/apps/<proyecto>`, que nunca hace merge ni descarta cambios locales; el
+build y el reinicio de los contenedores vienen después. Para llevar una plantilla modificada
+a los usuarios, instale de nuevo y ejecute `sudo vps-deploy user:create -y <usuario>` para cada usuario.
 
 `user:delete` verifica el usuario antes de tocar nada (debe existir, estar firmado, tener el shell
 nologin y no ser el usuario que ejecuta el `sudo`). Después desactiva el linger, detiene la instancia
@@ -130,6 +134,7 @@ src/                la herramienta
   user/main.sh      acciones de usuario (create, delete), ejecutables solo desde run.sh
   repo/main.sh      acciones de repositorio (create), como admin o como el usuario de deploy, solo desde run.sh
   {user,repo}/actions/<acción>/steps/NN-*.sh   pasos de cada acción, ejecutados en orden numérico, solo desde su main.sh
+  user/templates/   entrypoint.sh, copiado al entrypoint de CI de cada usuario de deploy
 docs/readme/        traducciones de este README
 ```
 

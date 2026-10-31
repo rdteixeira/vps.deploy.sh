@@ -65,27 +65,21 @@ fi
 # be able to cross CI_HOME (traverse only)
 setfacl -m "u:$USER_NAME:x" "$CI_HOME"
 
-# Same content for every user (no user name inside);
-# the deploy logic comes later
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
-
-cat > "$TMP" <<'EOF'
-#!/bin/bash
-# Deploys one project of the user that owns this file; meant to run as
-# sudo -u <user> <this file> <project>, from the CI account.
-set -euo pipefail
-EOF
+# The deploy logic lives in user/templates/entrypoint.sh (installed with the tool,
+# root-only); every user gets an identical copy
+TEMPLATE="$MAIN_DIR/templates/entrypoint.sh"
+[[ -f "$TEMPLATE" && -s "$TEMPLATE" ]] || die "$TEMPLATE is missing or empty; reinstall the scripts."
+bash -n "$TEMPLATE" || die "$TEMPLATE has a syntax error; not installing it."
 
 # An existing entry point is rewritten in place (its folder stays
 # immutable); a new one needs the folder writable for a moment
 if [[ -e "$ENTRYPOINT" ]]; then
   refuse_symlink "$ENTRYPOINT"
   chattr -i "$ENTRYPOINT"
-  cat "$TMP" > "$ENTRYPOINT"
+  cat "$TEMPLATE" > "$ENTRYPOINT"
 else
   chattr -i "$ENTRYPOINT_DIR"
-  install -o "$USER_NAME" -g root -m 0500 "$TMP" "$ENTRYPOINT"
+  install -o "$USER_NAME" -g root -m 0500 "$TEMPLATE" "$ENTRYPOINT"
   chattr +i "$ENTRYPOINT_DIR"
 fi
 chown "$USER_NAME:root" "$ENTRYPOINT"
@@ -102,7 +96,7 @@ chattr +i "$ENTRYPOINT"
   && "$(lsattr "$ENTRYPOINT" | cut -d' ' -f1)" == *i* ]] \
   || die "$ENTRYPOINT is not $USER_NAME:root 500 and immutable; not granting sudo."
 
-cmp -s "$TMP" "$ENTRYPOINT" \
+cmp -s "$TEMPLATE" "$ENTRYPOINT" \
   || die "$ENTRYPOINT does not have the expected content; not granting sudo."
 
 echo "Entry point $ENTRYPOINT ready."
@@ -110,7 +104,7 @@ echo "Entry point $ENTRYPOINT ready."
 # Written next to the final file with a '.' in its name (ignored
 # by sudo), checked with visudo, then moved in place
 SUDOERS_TMP="$(mktemp /etc/sudoers.d/.vps-deploy.XXXXXX)"
-trap 'rm -f "$TMP" "$SUDOERS_TMP"' EXIT
+trap 'rm -f "$SUDOERS_TMP"' EXIT
 cat > "$SUDOERS_TMP" <<EOF
 # Managed by vps.deploy (user:create $USER_NAME): $CI_USER may only run this entry point as $USER_NAME
 $CI_USER ALL=($USER_NAME) NOPASSWD: $ENTRYPOINT

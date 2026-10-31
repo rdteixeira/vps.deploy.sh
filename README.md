@@ -66,7 +66,11 @@ that lets `github` run it, and only it, as that user. Over SSH, the CI then runs
 sudo -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>
 ```
 
-The entry point is only a skeleton for now (it does nothing yet); the deploy logic comes later.
+Every entry point is a copy of the template `src/user/templates/entrypoint.sh`. For now it only
+updates the project: it checks `<project>` (the same name rule as `repo:create`) and runs
+`git pull --ff-only` in `~/opt/apps/<project>`, which never merges nor discards local changes; the
+build and restart of the containers come later. To roll out a changed template, install again and
+rerun `sudo vps-deploy user:create -y <user>` for each user.
 
 `user:delete` checks the user before touching anything (it must exist, be signed, have the nologin
 shell and not be the user running `sudo`), then disables linger, stops the user's systemd instance
@@ -128,6 +132,7 @@ src/                the tool
   user/main.sh      user actions (create, delete), runnable only from run.sh
   repo/main.sh      repository actions (create), as admin or as the deploy user, only from run.sh
   {user,repo}/actions/<action>/steps/NN-*.sh   steps of each action, run in numeric order, only from its main.sh
+  user/templates/   entrypoint.sh, copied to every deploy user's CI entry point
 docs/readme/        translations of this README
 ```
 
