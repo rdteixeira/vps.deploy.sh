@@ -1,6 +1,6 @@
 [English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | Español (Paraguay)
 
-> Traducción de [`README.md`](../../README.md) en el commit 99c089d.
+> Traducción de [`README.md`](../../README.md) en el commit 8f42f39.
 
 # vps.deploy.sh
 

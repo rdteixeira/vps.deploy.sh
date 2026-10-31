@@ -14,8 +14,8 @@ no dependencies beyond coreutils, `openssl`, `rsync`, `git`, `openssh-client`, `
 ## Layout: migration in progress
 
 The tool lives in **`src/`**, which is what `install.sh` ships. The legacy implementation (`lib/`, `user/`,
-`repo/`) was removed (still in commit 51dc3f7, `git show 51dc3f7:<path>`), except the root `run.sh`,
-which still sources the deleted `lib/` and no longer runs. Its `repo:add` is replaced by `repo:create`.
+`repo/` and the root `run.sh`) was removed (still in commit 51dc3f7, `git show 51dc3f7:<path>`). Its
+`repo:add` is replaced by `repo:create`.
 
 - `src/run.sh` (entry point: loads `lib/bash.sh` with `.` and calls `require_bash` first, then
   `cd "$EXEC_DIR"` and sources) → `src/lib/{usage,common}.sh` → `user_action` runs
@@ -23,8 +23,8 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   `bash ./repo/main.sh <action> ...` (after `require_trusted_install` only: `repo/main.sh` itself picks
   the mode from `EUID`). Both are child processes, **not** `exec`.
 - `src/user/main.sh` parses options (`ACTIONS=(create delete)`), reads the username, sets
-  `HOME_DIR`/`BASHRC`/`OPT_DIR`/`APPS_DIR` and `CI_USER=github` (the only place the CI account is named),
-  and calls `load_app_key`. For `delete` it first checks the user once, before any step: exits 0 if the
+  `CI_USER=github` (the only place the CI account is named), calls `require_valid_user_name` before the
+  name is used anywhere, sets `HOME_DIR`/`BASHRC`/`OPT_DIR`/`APPS_DIR` and calls `load_app_key`. For `delete` it first checks the user once, before any step: exits 0 if the
   user does not exist, sets `USER_UID`, calls `require_managed_user` and, without `-y`, asks to type the
   username (dies without a terminal). For `create` it dies before any step if `CI_USER` does not exist
   (`create/85-entrypoint` needs it; otherwise the user would be left half made). It runs
@@ -51,7 +51,8 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   themselves with `id -u`, overwriting the one `main.sh` passes, because the user may not exist before
   `create/10-user`; only `delete/90-verify` uses the passed `USER_UID` (the user is gone after
   `delete/20-user`).
-- `user/actions/create/steps/`: `10-user` (`useradd` + `user_sign`, or shell check of an existing user),
+- `user/actions/create/steps/`: `10-user` (`require_valid_user_name` again; `useradd` + `user_sign`, or, for an
+  existing user, dies unless `user_is_signed`, then the shell check),
   `20-folders` (`~/.ssh` as the user, `~/opt` root + `chattr +i`, `~/opt/apps` user, `refuse_symlink`
   before each root operation), `30-docker-packages` (only the missing packages, `acl` included for
   `85-entrypoint`; `setup_docker_repo` with `DOCKER_KEYRING`/`DOCKER_SOURCES` set by the step, also when
@@ -108,8 +109,6 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   default branch with `--track` only when the local repository has no commits, otherwise leaves it as is;
   an empty remote is a warning), `90-verify` (folder, owner, `.git`, `origin`, key files,
   `core.sshCommand`, `known_hosts`; an unreachable origin is only a warning).
-- Not migrated yet: the username checks (regex, reserved names, UID ≥ 1000), which `src/` does not do at
-  all. The old function-based version is kept commented out at the bottom of `user/main.sh`.
 
 Docs: `README.md` (English) with translations in `docs/readme/README.<lang>.md` (`pt-BR`, `es-PY`).
 
@@ -212,7 +211,6 @@ bash -n <file>                          # syntax check (shellcheck is not instal
 
 ## Known inconsistencies
 
-- The root `run.sh` is a leftover of the legacy code and fails (it sources the deleted `lib/`).
 - `install.sh` header comment says `/opt/vps.deploy.sh`; the real `DEST_DIR` is `/opt/vps.deploy`.
 - The header comment of `src/run.sh` lists `key:generate, user:create, user:delete`, not `repo:create`.
 - `load_app_key` in `src/lib/common.sh` tells the user to run `sudo ./run.sh key:generate`, not `sudo vps-deploy key:generate`.
