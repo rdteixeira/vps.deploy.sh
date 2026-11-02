@@ -8,28 +8,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 one **nologin deploy user per owner**, with rootless Docker, a root-owned immutable `~/opt` and a
 user-owned `~/opt/apps/<project>` per git repository, each with its own read-only deploy key. A CI
 account (`github`, a prerequisite the tool never creates) gets one sudo rule per deploy user: run that
-user's immutable entry point as that user, nothing else. Everything is plain Bash (`set -euo pipefail`),
+user's immutable entry point as that user, nothing else; over SSH it logs in only with per-project keys
+from a root-owned file, each forced to one entry point and project. Everything is plain Bash (`set -euo pipefail`),
 no dependencies beyond coreutils, `openssl`, `rsync`, `git`, `openssh-client`, `acl`, sudo, apt and systemd.
 
 ## Layout: migration in progress
 
 The tool lives in **`src/`**, which is what `install.sh` ships. The legacy implementation (`lib/`, `user/`,
-`repo/`) was removed (still in commit 51dc3f7, `git show 51dc3f7:<path>`), except the root `run.sh`,
-which still sources the deleted `lib/` and no longer runs. Its `repo:add` is replaced by `repo:create`.
+`repo/` and the root `run.sh`) was removed (still in commit 51dc3f7, `git show 51dc3f7:<path>`). Its
+`repo:add` is replaced by `repo:create`.
 
 - `src/run.sh` (entry point: loads `lib/bash.sh` with `.` and calls `require_bash` first, then
   `cd "$EXEC_DIR"` and sources) → `src/lib/{usage,common}.sh` → `user_action` runs
   `bash ./user/main.sh <action> ...` (after `require_root`) and `repo_action` runs
   `bash ./repo/main.sh <action> ...` (after `require_trusted_install` only: `repo/main.sh` itself picks
   the mode from `EUID`). Both are child processes, **not** `exec`.
-- `src/user/main.sh` parses options (`ACTIONS=(create delete)`), reads the username, sets
-  `HOME_DIR`/`BASHRC`/`OPT_DIR`/`APPS_DIR` and `CI_USER=github` (the only place the CI account is named),
+- `src/lib/common.sh` sets `CI_USER=github` (the only place the CI account is named; every script gets
+  it by sourcing the file) and `CI_KEYS_DIR=/etc/ssh/authorized_keys`, `CI_KEYS_FILE=<CI_KEYS_DIR>/<CI_USER>`.
+- `src/user/main.sh` parses options (`ACTIONS=(create delete)`), reads the username, calls
+  `require_valid_user_name` before the name is used anywhere, sets `HOME_DIR`/`BASHRC`/`OPT_DIR`/`APPS_DIR`
   and calls `load_app_key`. For `delete` it first checks the user once, before any step: exits 0 if the
   user does not exist, sets `USER_UID`, calls `require_managed_user` and, without `-y`, asks to type the
   username (dies without a terminal). For `create` it dies before any step if `CI_USER` does not exist
   (`create/85-entrypoint` needs it; otherwise the user would be left half made). It runs
   `src/user/actions/<action>/steps/NN-*.sh` in numeric order with `USER_NAME`, `HOME_DIR`, `BASHRC`,
-  `OPT_DIR`, `APPS_DIR`, `CI_USER`, `USER_UID` (empty for `create`) and `ASSUME_YES` passed as environment
+  `OPT_DIR`, `APPS_DIR`, `USER_UID` (empty for `create`) and `ASSUME_YES` passed as environment
   prefixes (`USER_NAME=... ... bash "$step"`; nothing is exported) and prints a final `Done.` line per action.
 - `src/repo/main.sh` (`ACTIONS=(create)`) has two modes:
   - **admin** (`EUID` 0): `repo:create [-y] <user> <name> <git-ssh-url>`; the user must exist and pass
@@ -51,7 +54,8 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   themselves with `id -u`, overwriting the one `main.sh` passes, because the user may not exist before
   `create/10-user`; only `delete/90-verify` uses the passed `USER_UID` (the user is gone after
   `delete/20-user`).
-- `user/actions/create/steps/`: `10-user` (`useradd` + `user_sign`, or shell check of an existing user),
+- `user/actions/create/steps/`: `10-user` (`require_valid_user_name` again; `useradd` + `user_sign`, or, for an
+  existing user, dies unless `user_is_signed`, then the shell check),
   `20-folders` (`~/.ssh` as the user, `~/opt` root + `chattr +i`, `~/opt/apps` user, `refuse_symlink`
   before each root operation), `30-docker-packages` (only the missing packages, `acl` included for
   `85-entrypoint`; `setup_docker_repo` with `DOCKER_KEYRING`/`DOCKER_SOURCES` set by the step, also when
@@ -87,13 +91,14 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
 - `user/actions/delete/steps/`: `10-services` (`require_managed_user` again, `loginctl disable-linger`,
   `systemctl stop user@<uid>.service` so `docker.service` stops the containers gracefully,
   `loginctl terminate-user`, `pkill -KILL`, waits up to 10 s until no process is left), `15-entrypoint`
-  (`require_managed_user` again; removes the sudoers file first; if `CI_USER` exists and the entry point
+  (`require_managed_user` again; removes the sudoers file first, then every line of `CI_KEYS_FILE` whose
+  comment starts with `vps-deploy:<user>/` (awk to a temp file in `CI_KEYS_DIR`, `mv -f`); if `CI_USER` exists and the entry point
   folder is root-owned, `chattr -i` file and folder, `rm`, `chattr +i` folder, otherwise only warns;
   `setfacl -x u:<user>` on `CI_HOME` while the name still resolves, i.e. before `20-user`), `20-user`
   (`require_managed_user` again, `chattr -i ~/opt` only if it is a directory and not a symlink,
   `userdel -r`, removes leftover `/etc/subuid`/`/etc/subgid` lines), `90-verify` (no `id -u` nor
   `require_managed_user`, the user is gone: checks that the user, the home, the linger file, the
-  subordinate ranges, the sudoers file and the entry point are gone, and with `getfacl -cpn` that no ACL
+  subordinate ranges, the sudoers file, the CI keys and the entry point are gone, and with `getfacl -cpn` that no ACL
   is left for the `USER_UID` passed by `main.sh`).
 - `repo/actions/create/steps/` (every one idempotent; all git and file work runs as the user):
   `10-folder` (`refuse_symlink`, `install -d` as the user), `20-init` (`git init` if there is no `.git`),
@@ -106,10 +111,24 @@ which still sources the deleted `lib/` and no longer runs. Its `repo:add` is rep
   `DEPLOY_KEYS_URL` and waits for Enter or `skip`, except with `-y` or without a terminal), `60-fetch`
   (skipped while the key is refused; `fetch --prune`, `remote set-head origin --auto`; checks out the
   default branch with `--track` only when the local repository has no commits, otherwise leaves it as is;
-  an empty remote is a warning), `90-verify` (folder, owner, `.git`, `origin`, key files,
-  `core.sshCommand`, `known_hosts`; an unreachable origin is only a warning).
-- Not migrated yet: the username checks (regex, reserved names, UID ≥ 1000), which `src/` does not do at
-  all. The old function-based version is kept commented out at the bottom of `user/main.sh`.
+  an empty remote is a warning), `70-ci-sshd` (admin only, skipped with a warning in user mode; needs
+  `CI_USER`, `sshd` and the `Include /etc/ssh/sshd_config.d/*.conf` line; makes `CI_KEYS_DIR` `root 0755`
+  and `CI_KEYS_FILE` `root 0644`; writes `/etc/ssh/sshd_config.d/10-vps-deploy.conf` (a `Match User
+  <CI_USER>` block: `AuthorizedKeysFile <CI_KEYS_DIR>/%u`, `AuthenticationMethods publickey`, no
+  password/keyboard-interactive, TTY, TCP/agent/X11 forwarding nor tunnel, closed by `Match all`) through
+  a `.vps-deploy.XXXXXX` temp file only when the content differs, `sshd -t` (restores the previous file on
+  failure), then always checks with `sshd -T -C user=<CI_USER>,...` that those values win (sshd keeps the
+  first value it reads, so an earlier file in `sshd_config.d` could override them) and
+  `systemctl try-reload-or-restart ssh.service` only when it changed), `80-ci-key` (admin only; dies if the
+  user has no entry point or sudoers file; a line whose last field is `vps-deploy:<user>/<name>` means the
+  key is already there (prints its fingerprint); otherwise, unless `-y` or without a terminal, prints the
+  `ssh-keygen` command to run on the admin's computer and reads the public key: keeps only an
+  `ssh-ed25519` type and base64 blob, checked with `ssh-keygen -lf -`, refuses a blob already in the file
+  (sshd uses the first matching line), and appends `restrict,command="sudo -n -u <user> <entrypoint>
+  <name>" <type> <blob> vps-deploy:<user>/<name>` through a temp file in `CI_KEYS_DIR` and `mv -f`; prints
+  the server's ed25519 host key line for the `VPS_HOST_KEY` secret), `90-verify` (folder, owner, `.git`,
+  `origin`, key files, `core.sshCommand`, `known_hosts`, and as root the CI key line; an unreachable
+  origin or a missing CI key is only a warning).
 
 Docs: `README.md` (English) with translations in `docs/readme/README.<lang>.md` (`pt-BR`, `es-PY`).
 
@@ -118,7 +137,8 @@ folder with `/..`), `MAIN_DIR` (`src/user` or `src/repo`, set by the steps), `EN
 holds `APP_KEY`), `ARGS`/`COMMAND` (set by `common.sh` from the caller's arguments), `ACTION`/`STEPS_DIR`,
 `USER_NAME`, `USER_UID`, `RUNTIME_DIR` (`/run/user/<uid>`), `HOME_DIR`/`OPT_DIR`/`APPS_DIR`, `BASHRC`
 (`~/.bashrc`), `ASSUME_YES`, `REPO_NAME`/`REPO_URL`/`REPO_HOST`/`REPO_DIR` (`~/opt/apps/<name>`),
-`DEPLOY_KEY` (`~/.ssh/deploy_<name>`), `DEPLOY_KEYS_URL`, `CI_USER` (`github`, from `user/main.sh`),
+`DEPLOY_KEY` (`~/.ssh/deploy_<name>`), `DEPLOY_KEYS_URL`, `CI_USER` (`github`) and
+`CI_KEYS_DIR`/`CI_KEYS_FILE` (from `common.sh`), `MARKER` (`vps-deploy:<user>/<name>`, set by `80-ci-key`),
 `CI_HOME`/`ENTRYPOINT_DIR`/`ENTRYPOINT`/`SUDOERS_FILE` (set by `85-entrypoint` and `delete/15-entrypoint`),
 `DEPLOY_GROUP=deploy`,
 `SIGNATURE_PREFIX=vps.deploy` (the removed legacy code used `vps.deploy.sh`; users signed by it are not
@@ -138,7 +158,8 @@ sudo vps-deploy key:generate [-f]       # APP_KEY in .env (root, 600); -f breaks
 sudo vps-deploy user:create [-y] [name] # needs the github user; steps create/10-user to 85-entrypoint, 90-verify
 sudo vps-deploy user:delete [-y] [name] # checks + confirmation in main.sh, then steps delete/10-services, 15-entrypoint, 20-user, 90-verify
 sudo -u github sudo -n -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>   # what the CI runs (git pull --ff-only today)
-sudo vps-deploy repo:create [-y] [user] [name] [git-ssh-url]   # admin mode, signed users only
+sudo vps-deploy repo:create [-y] [user] [name] [git-ssh-url]   # admin mode, signed users only; also sets up the CI's SSH login and key
+ssh -i ./ci_<user>_<project> -o IdentitiesOnly=yes github@<server>   # what the CI runs over SSH: always the forced entry point command
 sudo -u <user> bash -c 'cd ~ && vps-deploy repo:create [-y] [name] [git-ssh-url]'   # user mode (deploy group)
 bash -n <file>                          # syntax check (shellcheck is not installed on the dev host)
 ```
@@ -184,6 +205,18 @@ bash -n <file>                          # syntax check (shellcheck is not instal
     `/usr/local/lib/vps-deploy/entrypoints`) would have no race and need no ACL.
   - `delete/15-entrypoint` revokes the sudoers file first and removes the ACL before `userdel` (afterwards
     the name no longer resolves); without it a user recreated with the same name would get the old rule.
+- **CI SSH keys**: the CI account logs in over SSH only with the keys of `CI_KEYS_FILE` (root-owned, so it
+  cannot add keys or drop a forced command), never with a password, a TTY or any forwarding.
+  - One key per project, generated off the server (the tool never sees the private key). Each line is
+    `restrict,command="sudo -n -u <user> <entrypoint> <project>"`: user, entry point and project are fixed,
+    whatever command the client sends; never read `SSH_ORIGINAL_COMMAND`.
+  - The line is rebuilt from the pasted key's type and blob only, so pasted options (`command=`,
+    `from=`) are dropped; the same blob is never allowed twice (sshd uses the first matching line).
+  - No `ForceCommand` in the `Match` block: it would override every key's `command=`.
+  - The sshd file is applied only after `sshd -t` and `sshd -T` checks, restored when they fail.
+  - `delete/15-entrypoint` removes the user's lines with the sudoers file: a user recreated with the same
+    name must not inherit them. The sudo rule still lets the CI *account* run any entry point with any
+    argument; the per-key limit holds for whoever logs in with that key.
 - **No data loss in `repo:create`**: `30-remote` never replaces another `origin`; `60-fetch` never uses
   `checkout -B`, `reset` or `--force`, and leaves a repository with commits untouched.
 - **Trusted install** (V3): `require_trusted_install` (called by `require_root`, and by `repo_action`
@@ -205,14 +238,13 @@ bash -n <file>                          # syntax check (shellcheck is not instal
 - **Username checks**: `require_valid_user_name` (`src/lib/common.sh`) enforces `^[a-z_][a-z0-9_-]*$`,
   refuses `RESERVED_USERS` (`root system ubuntu claude nobody`) plus `$CI_USER`, the caller
   (`$SUDO_USER`) and existing users with UID < 1000. `user/main.sh` calls it right after reading the
-  name (`CI_USER` must be set before), and `create/10-user` calls it again. `10-user` also refuses an
+  name (`CI_USER` comes from `common.sh`), and `create/10-user` calls it again. `10-user` also refuses an
   existing user that is not signed (`user_is_signed`), so `user:create` never adopts or changes an
   account it did not create (e.g. one made with `adduser`).
 - Pending: V5 (`.idea/` not in `.gitignore`).
 
 ## Known inconsistencies
 
-- The root `run.sh` is a leftover of the legacy code and fails (it sources the deleted `lib/`).
 - `install.sh` header comment says `/opt/vps.deploy.sh`; the real `DEST_DIR` is `/opt/vps.deploy`.
 - The header comment of `src/run.sh` lists `key:generate, user:create, user:delete`, not `repo:create`.
 - `load_app_key` in `src/lib/common.sh` tells the user to run `sudo ./run.sh key:generate`, not `sudo vps-deploy key:generate`.
@@ -263,7 +295,9 @@ port 22 is slow and flaky there (1.7–4.7 s per `ls-remote`, occasional timeout
 unreachable), which is why `ssh-keyscan` and `repo_reachable` retry. WSL runs **sudo-rs** (0.2.13):
 `visudo -c -f` returns 0/1 and `sudo -l -U` works; `@includedir /etc/sudoers.d` is on. `user:create` needs
 the CI account first: `sudo useradd -m -s /bin/bash github` (not there by default); `acl` comes from
-`create/30-docker-packages`.
+`create/30-docker-packages`. `repo:create` as admin needs `openssh-server` (`70-ci-sshd`); test the CI
+login with `ssh -i <key> github@localhost` (any command is replaced by the entry point; `-t`, `-N -L` and
+password login must be refused).
 
 In both: use throwaway names (`teste`) and fake targets (`/etc/vps-alvo`, `/srv/vps-alvo`) for exploit
 tests, and clean up with `user:delete` (never with a manual `pkill`/`userdel`, which leaves linger and a

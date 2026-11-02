@@ -8,6 +8,14 @@ ARGS="$*"
 COMMAND="${1:-}"
 SIGNATURE_PREFIX=vps.deploy
 
+# CI account (e.g. GitHub Actions over SSH) that may only run each user's entry point;
+# a prerequisite: the tool never creates it
+CI_USER=github
+
+# The CI account's SSH keys, one forced command per line; root-owned, so CI_USER cannot edit them
+CI_KEYS_DIR=/etc/ssh/authorized_keys
+CI_KEYS_FILE="$CI_KEYS_DIR/$CI_USER"
+
 # Accounts that are never deploy users: admin, automation, nobody, and the CI account (CI_USER)
 RESERVED_USERS=(root system ubuntu claude nobody)
 

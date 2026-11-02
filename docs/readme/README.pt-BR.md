@@ -1,6 +1,6 @@
 [English](../../README.md) | Português (Brasil) | [Español (Paraguay)](README.es-PY.md)
 
-> Tradução de [`README.md`](../../README.md) no commit 99c089d.
+> Tradução de [`README.md`](../../README.md) no commit 8f42f39.
 
 # vps.deploy.sh
 
@@ -21,7 +21,8 @@ Ferramenta em Bash, executada como root, que prepara uma VPS Ubuntu/Debian para 
 Ubuntu ou Debian com systemd, `bash`, `sudo`, `openssl`, `rsync`, `git` e `openssh-client`
 (`ssh-keygen`, `ssh-keyscan`). O `user:create` instala os pacotes do Docker (`docker-ce`,
 `docker-ce-rootless-extras`, `uidmap`, `dbus-user-session`, ...) a partir do repositório apt oficial da
-Docker, e o `acl`, quando eles estão faltando.
+Docker, e o `acl`, quando eles estão faltando. O `repo:create` como admin também precisa do
+`openssh-server` (ele configura o login SSH do CI).
 
 A conta de CI `github` precisa existir antes do `user:create`; a ferramenta nunca a cria:
 
@@ -62,7 +63,8 @@ shell de login de um usuário existente; digitar o nome do usuário para confirm
 
 O `user:create` termina dando à conta de CI um entrypoint para o novo usuário,
 `/home/github/entrypoints/entrypoint_<usuário>.sh`, e uma regra de sudo (`/etc/sudoers.d/vps-deploy-<usuário>`)
-que deixa o `github` rodá-lo, e só ele, como esse usuário. Por SSH, o CI então roda:
+que deixa o `github` rodá-lo, e só ele, como esse usuário. O CI não escolhe o comando: a chave de CI
+de cada projeto (adicionada pelo `repo:create`) entra como `github`, e o servidor sempre roda, para ela:
 
 ```bash
 sudo -u <usuário> /home/github/entrypoints/entrypoint_<usuário>.sh <projeto>
@@ -77,14 +79,14 @@ de novo e rode `sudo vps-deploy user:create -y <usuário>` para cada usuário.
 O `user:delete` confere o usuário antes de mexer em qualquer coisa (ele precisa existir, estar
 assinado, ter o shell nologin e não ser o usuário que está rodando o `sudo`). Depois desliga o linger,
 para a instância systemd do usuário (incluindo o Docker rootless e os containers) e qualquer processo
-que tenha sobrado, revoga a regra de sudo da conta de CI e remove o entrypoint, remove o usuário, o home
+que tenha sobrado, revoga a regra de sudo da conta de CI e as chaves de CI do usuário e remove o entrypoint, remove o usuário, o home
 com todos os projetos dentro e as faixas de ids subordinados, e confere que nada ficou para trás.
 
 O `repo:create` prepara `/home/<usuário>/opt/apps/<nome>` como um clone de `<git-ssh-url>`
 (`git@github.com:dono/repo.git`, `git@gitlab.com:grupo/projeto.git` ou outra URL `ssh://`). Como
 admin, o usuário precisa ter sido criado pelo `user:create`; o próprio usuário de deploy também pode
 rodá-lo, sem sudo e sem `<usuário>` (o usuário é nologin, então abra um shell com `sudo -u <usuário> bash`).
-Os argumentos que faltarem são perguntados. Tudo roda como o usuário de deploy:
+Os argumentos que faltarem são perguntados. Todo o trabalho com o git roda como o usuário de deploy:
 
 1. cria a pasta, roda `git init` e define o `origin` (um `origin` diferente já existente é recusado);
 2. confia no host key do `github.com` / `gitlab.com` no `~/.ssh/known_hosts` só se ele bater com o
@@ -93,10 +95,30 @@ Os argumentos que faltarem são perguntados. Tudo roda como o usuário de deploy
    não a aceita, mostra a chave pública e a página onde cadastrá-la (deixe o acesso de escrita
    desmarcado) e espera um Enter (ou `skip`);
 4. faz o fetch e o checkout da branch padrão, só quando o repositório ainda não tem commits;
-5. confere o resultado.
+5. só como admin: faz o `github` entrar por SSH só com chaves do arquivo do root
+   `/etc/ssh/authorized_keys/github` (sem senha, TTY nem forwarding) e depois pede a chave pública de CI
+   do projeto, que você gera no seu computador; essa chave só consegue rodar o entrypoint deste projeto;
+6. confere o resultado.
 
-Rodar de novo não muda nada do que já está pronto. O `-y` usa uma pasta existente sem perguntar e não
-espera a deploy key (como quando não há terminal); faça o fetch depois, como o usuário.
+Rodar de novo não muda nada do que já está pronto. O `-y` usa uma pasta existente sem perguntar, não
+espera a deploy key e não pede a chave de CI (como quando não há terminal); faça o fetch depois, como o
+usuário, e rode o `repo:create` de novo para a chave de CI.
+
+A chave privada de CI vai para o secret `VPS_CI_KEY` do Actions do repositório, e a linha do host key
+que o `repo:create` mostra (com o endereço do servidor na frente) vai para `VPS_HOST_KEY`. O workflow só
+se conecta:
+
+```yaml
+- name: Deploy
+  run: |
+    install -m 600 /dev/null ~/.ssh/ci_key
+    echo "$CI_KEY" > ~/.ssh/ci_key
+    echo "$VPS_HOST_KEY" >> ~/.ssh/known_hosts
+    ssh -i ~/.ssh/ci_key -o IdentitiesOnly=yes -o BatchMode=yes github@<servidor>
+  env:
+    CI_KEY: ${{ secrets.VPS_CI_KEY }}
+    VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+```
 
 ## Modelo de segurança
 
@@ -125,6 +147,12 @@ espera a deploy key (como quando não há terminal); faça o fetch depois, como 
   (`chattr +i`), numa pasta `entrypoints/` do root e também imutável: o `github` não consegue lê-lo,
   alterá-lo, executá-lo diretamente nem apagá-lo, e o usuário de deploy também não consegue alterá-lo nem
   apagá-lo. A regra de sudo libera só esse arquivo e só é gravada depois que o arquivo e a pasta são conferidos.
+- **Chaves SSH do CI.** Uma chave por projeto, gerada fora do servidor: cada linha do arquivo do root
+  `/etc/ssh/authorized_keys/github` é `restrict,command="..."`, então essa chave só roda o entrypoint do
+  seu projeto, seja qual for o comando que ela mande, sem shell, TTY nem túnel. Da linha colada só ficam
+  o tipo e a chave, a mesma chave nunca é aceita duas vezes, e o `github` não consegue editar o arquivo.
+  A configuração do sshd só é aplicada depois do `sshd -t` e é restaurada quando falha; o `user:delete`
+  remove as chaves do usuário.
 - **Segredos.** O `.env` é lido com `sed` e nunca com `source`.
 
 Modos depois da instalação: pasta da ferramenta `711`, `run.sh` `705`, `lib/` e `repo/` `705` com os

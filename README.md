@@ -19,7 +19,8 @@ Bash tool, run as root, that prepares an Ubuntu/Debian VPS to host projects:
 Ubuntu or Debian with systemd, `bash`, `sudo`, `openssl`, `rsync`, `git` and `openssh-client`
 (`ssh-keygen`, `ssh-keyscan`). `user:create` installs the Docker packages (`docker-ce`,
 `docker-ce-rootless-extras`, `uidmap`, `dbus-user-session`, ...) from Docker's official apt repository,
-and `acl`, when they are missing.
+and `acl`, when they are missing. `repo:create` as admin also needs `openssh-server` (it sets up the CI's
+SSH login).
 
 The CI account `github` must exist before `user:create`; the tool never creates it:
 
@@ -60,7 +61,8 @@ existing user's login shell; typing the username to confirm a delete).
 
 `user:create` ends by giving the CI account an entry point for the new user,
 `/home/github/entrypoints/entrypoint_<user>.sh`, and a sudo rule (`/etc/sudoers.d/vps-deploy-<user>`)
-that lets `github` run it, and only it, as that user. Over SSH, the CI then runs:
+that lets `github` run it, and only it, as that user. The CI does not choose the command: each project's
+CI key (added by `repo:create`) logs in as `github` and the server always runs, for that key:
 
 ```bash
 sudo -u <user> /home/github/entrypoints/entrypoint_<user>.sh <project>
@@ -75,14 +77,14 @@ rerun `sudo vps-deploy user:create -y <user>` for each user.
 `user:delete` checks the user before touching anything (it must exist, be signed, have the nologin
 shell and not be the user running `sudo`), then disables linger, stops the user's systemd instance
 (rootless Docker and its containers included) and any process left, revokes the CI account's sudo rule
-and removes the entry point, removes the user, its home with every project in it and its subordinate id
+and the user's CI keys and removes the entry point, removes the user, its home with every project in it and its subordinate id
 ranges, and checks that nothing is left.
 
 `repo:create` prepares `/home/<user>/opt/apps/<name>` as a clone of `<git-ssh-url>`
 (`git@github.com:owner/repo.git`, `git@gitlab.com:group/project.git` or another `ssh://` URL). As
 admin, the user must have been created by `user:create`; the deploy user can run it too, without sudo
 and without `<user>` (the user is nologin, so open a shell with `sudo -u <user> bash`). Missing
-arguments are asked for. Everything runs as the deploy user:
+arguments are asked for. All the git work runs as the deploy user:
 
 1. creates the folder, runs `git init` and sets `origin` (an existing, different `origin` is refused);
 2. trusts the host key of `github.com` / `gitlab.com` in `~/.ssh/known_hosts` only if it matches the
@@ -91,10 +93,29 @@ arguments are asked for. Everything runs as the deploy user:
    server does not accept it yet, prints the public key and the page to add it on (leave write access
    unchecked) and waits for Enter (or `skip`);
 4. fetches and checks out the default branch, only when the repository has no commits yet;
-5. checks the result.
+5. as admin only: makes `github` log in over SSH only with keys from the root-owned
+   `/etc/ssh/authorized_keys/github` (no password, TTY nor forwarding), then asks for the project's CI
+   public key, which you generate on your computer; that key can only run this project's entry point;
+6. checks the result.
 
-Running it again changes nothing that is already in place. `-y` uses an existing folder without asking
-and does not wait for the deploy key (as when there is no terminal); fetch later as the user.
+Running it again changes nothing that is already in place. `-y` uses an existing folder without asking,
+does not wait for the deploy key and does not ask for the CI key (as when there is no terminal); fetch
+later as the user and run `repo:create` again for the CI key.
+
+The private CI key goes to the repository's Actions secret `VPS_CI_KEY`, and the host key line that
+`repo:create` prints (with the server's address first) to `VPS_HOST_KEY`. The workflow only connects:
+
+```yaml
+- name: Deploy
+  run: |
+    install -m 600 /dev/null ~/.ssh/ci_key
+    echo "$CI_KEY" > ~/.ssh/ci_key
+    echo "$VPS_HOST_KEY" >> ~/.ssh/known_hosts
+    ssh -i ~/.ssh/ci_key -o IdentitiesOnly=yes -o BatchMode=yes github@<server>
+  env:
+    CI_KEY: ${{ secrets.VPS_CI_KEY }}
+    VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+```
 
 ## Security model
 
@@ -121,6 +142,12 @@ and does not wait for the deploy key (as when there is no terminal); fetch later
   (`chattr +i`), in a root-owned, immutable `entrypoints/` folder: `github` cannot read, change, run
   directly or delete it, and the deploy user cannot change or delete it either. The sudo rule allows
   only that file, and is written only after the file and the folder are checked.
+- **CI SSH keys.** One key per project, generated off the server: each line of the root-owned
+  `/etc/ssh/authorized_keys/github` is `restrict,command="..."`, so that key runs only its project's
+  entry point, whatever command it sends, with no shell, TTY or tunnel. Only the type and the key of
+  the pasted line are kept, the same key is never allowed twice, and `github` cannot edit the file. The
+  sshd settings are applied only after `sshd -t` and are restored when they fail; `user:delete` removes
+  the user's keys.
 - **Secrets.** `.env` is read with `sed`, never sourced.
 
 Installed modes: tool folder `711`, `run.sh` `705`, `lib/` and `repo/` `705` with their files `604`,

@@ -17,9 +17,12 @@ Commands:
   repo:create [-y] [user] [name] [git-ssh-url]    Create /home/<user>/opt/apps/<name> as a git repository
                                                   with <git-ssh-url> as origin. As root, <user> must have
                                                   been created by user:create; as a deploy user (no sudo),
-                                                  omit <user>: the repository is created in your own home
-                                                  -y, --yes    Use an existing folder without asking and do
-                                                               not wait for the deploy key to be added
+                                                  omit <user>: the repository is created in your own home.
+                                                  As root it also locks the CI account's SSH login and asks
+                                                  for the project's CI public key (forced to its entry point)
+                                                  -y, --yes    Use an existing folder without asking, do not
+                                                               wait for the deploy key to be added and do
+                                                               not ask for the CI key
 
 Options:
   -h, --help                Show this help

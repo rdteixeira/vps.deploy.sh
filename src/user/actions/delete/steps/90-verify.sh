@@ -31,6 +31,8 @@ refuse_directly_use "$MAIN_DIR/main.sh"
 
 # 15-entrypoint: the CI account must have no sudo rule nor entry point left for the user
 [[ ! -e "/etc/sudoers.d/vps-deploy-$USER_NAME" ]] || die "Sudo rule /etc/sudoers.d/vps-deploy-$USER_NAME still exists."
+! { [[ -f "$CI_KEYS_FILE" ]] && awk -v p="vps-deploy:$USER_NAME/" 'index($NF, p) == 1 { found = 1 } END { exit !found }' "$CI_KEYS_FILE"; } \
+  || die "$CI_KEYS_FILE still has CI keys of $USER_NAME."
 if getent passwd "$CI_USER" >/dev/null; then
   CI_HOME="$(getent passwd "$CI_USER" | cut -d: -f6)"
   [[ ! -e "$CI_HOME/entrypoints/entrypoint_$USER_NAME.sh" ]] \

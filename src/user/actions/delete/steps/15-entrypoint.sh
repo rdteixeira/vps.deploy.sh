@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Revokes the CI account's sudo rule for the user and removes its entry
-# point and the traverse ACL on the CI home (85-entrypoint of create).
+# Revokes the CI account's sudo rule and SSH keys for the user and removes its
+# entry point and the traverse ACL on the CI home (85-entrypoint of create).
 set -euo pipefail
 
 # Folder of this script, following symlinks
@@ -35,6 +35,20 @@ if [[ -e "$SUDOERS_FILE" || -L "$SUDOERS_FILE" ]]; then
   echo "Sudo rule $SUDOERS_FILE removed."
 else
   echo "No sudo rule $SUDOERS_FILE."
+fi
+
+# Its CI keys go with the sudo rule: a user recreated with this name must not inherit them
+CI_PREFIX="vps-deploy:$USER_NAME/"
+if [[ -f "$CI_KEYS_FILE" && ! -L "$CI_KEYS_FILE" ]] \
+   && awk -v p="$CI_PREFIX" 'index($NF, p) == 1 { found = 1 } END { exit !found }' "$CI_KEYS_FILE"; then
+  KEYS_TMP="$(mktemp "$CI_KEYS_DIR/.keys.XXXXXX")"
+  trap 'rm -f "$KEYS_TMP"' EXIT
+  awk -v p="$CI_PREFIX" 'index($NF, p) != 1' "$CI_KEYS_FILE" > "$KEYS_TMP"
+  chmod 0644 "$KEYS_TMP"
+  mv -f "$KEYS_TMP" "$CI_KEYS_FILE"
+  echo "CI keys of $USER_NAME removed from $CI_KEYS_FILE."
+else
+  echo "No CI keys of $USER_NAME in $CI_KEYS_FILE."
 fi
 
 # Without the CI account there is no entry point nor ACL left to clean

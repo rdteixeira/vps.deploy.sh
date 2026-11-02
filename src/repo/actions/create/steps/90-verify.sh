@@ -46,4 +46,13 @@ else
   echo "Warning: $REPO_HOST does not accept $DEPLOY_KEY yet. Add $DEPLOY_KEY.pub as a read-only" \
     "deploy key${DEPLOY_KEYS_URL:+ at $DEPLOY_KEYS_URL}, then run repo:create again." >&2
 fi
+# The CI keys file is root's: only checked in admin mode
+if (( EUID == 0 )); then
+  if [[ -f "$CI_KEYS_FILE" ]] \
+     && awk -v m="vps-deploy:$USER_NAME/$REPO_NAME" '$NF == m { found = 1 } END { exit !found }' "$CI_KEYS_FILE"; then
+    echo "CI key for $USER_NAME/$REPO_NAME is allowed in $CI_KEYS_FILE."
+  else
+    echo "Warning: no CI key for $USER_NAME/$REPO_NAME; the CI cannot deploy it yet (run repo:create again)." >&2
+  fi
+fi
 echo "Repository $REPO_NAME verified."

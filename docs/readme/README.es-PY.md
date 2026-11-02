@@ -1,6 +1,6 @@
 [English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | Español (Paraguay)
 
-> Traducción de [`README.md`](../../README.md) en el commit 99c089d.
+> Traducción de [`README.md`](../../README.md) en el commit 8f42f39.
 
 # vps.deploy.sh
 
@@ -21,7 +21,8 @@ Herramienta en Bash, ejecutada como root, que prepara un VPS Ubuntu/Debian para 
 Ubuntu o Debian con systemd, `bash`, `sudo`, `openssl`, `rsync`, `git` y `openssh-client`
 (`ssh-keygen`, `ssh-keyscan`). `user:create` instala los paquetes de Docker (`docker-ce`,
 `docker-ce-rootless-extras`, `uidmap`, `dbus-user-session`, ...) desde el repositorio apt oficial de
-Docker, y `acl`, cuando faltan.
+Docker, y `acl`, cuando faltan. `repo:create` como admin también necesita `openssh-server` (configura
+el inicio de sesión SSH del CI).
 
 La cuenta de CI `github` debe existir antes de `user:create`; la herramienta nunca la crea:
 
@@ -62,7 +63,8 @@ shell de inicio de sesión de un usuario existente; escribir el nombre del usuar
 
 `user:create` termina dándole a la cuenta de CI un entrypoint para el nuevo usuario,
 `/home/github/entrypoints/entrypoint_<usuario>.sh`, y una regla de sudo (`/etc/sudoers.d/vps-deploy-<usuario>`)
-que permite a `github` ejecutarlo, y solo a él, como ese usuario. Por SSH, el CI entonces ejecuta:
+que permite a `github` ejecutarlo, y solo a él, como ese usuario. El CI no elige el comando: la clave
+de CI de cada proyecto (agregada por `repo:create`) entra como `github`, y el servidor siempre ejecuta, para ella:
 
 ```bash
 sudo -u <usuario> /home/github/entrypoints/entrypoint_<usuario>.sh <proyecto>
@@ -77,14 +79,14 @@ a los usuarios, instale de nuevo y ejecute `sudo vps-deploy user:create -y <usua
 `user:delete` verifica el usuario antes de tocar nada (debe existir, estar firmado, tener el shell
 nologin y no ser el usuario que ejecuta el `sudo`). Después desactiva el linger, detiene la instancia
 systemd del usuario (incluidos el Docker rootless y sus contenedores) y cualquier proceso que haya
-quedado, revoca la regla de sudo de la cuenta de CI y elimina el entrypoint, elimina el usuario, su home
+quedado, revoca la regla de sudo de la cuenta de CI y las claves de CI del usuario y elimina el entrypoint, elimina el usuario, su home
 con todos los proyectos que contiene y sus rangos de ids subordinados, y verifica que no quede nada.
 
 `repo:create` prepara `/home/<usuario>/opt/apps/<nombre>` como un clon de `<git-ssh-url>`
 (`git@github.com:dueño/repo.git`, `git@gitlab.com:grupo/proyecto.git` u otra URL `ssh://`). Como
 admin, el usuario debe haber sido creado por `user:create`; el propio usuario de deploy también puede
 ejecutarlo, sin sudo y sin `<usuario>` (el usuario es nologin, así que abra un shell con
-`sudo -u <usuario> bash`). Los argumentos que falten se preguntan. Todo se ejecuta como el usuario de deploy:
+`sudo -u <usuario> bash`). Los argumentos que falten se preguntan. Todo el trabajo con git se ejecuta como el usuario de deploy:
 
 1. crea la carpeta, ejecuta `git init` y define el `origin` (un `origin` distinto ya existente se rechaza);
 2. confía en el host key de `github.com` / `gitlab.com` en `~/.ssh/known_hosts` solo si coincide con el
@@ -93,10 +95,31 @@ ejecutarlo, sin sudo y sin `<usuario>` (el usuario es nologin, así que abra un 
    servidor todavía no la acepta, muestra la clave pública y la página donde registrarla (deje el acceso
    de escritura sin marcar) y espera un Enter (o `skip`);
 4. hace el fetch y el checkout de la rama por defecto, solo cuando el repositorio todavía no tiene commits;
-5. verifica el resultado.
+5. solo como admin: hace que `github` entre por SSH solo con claves del archivo de root
+   `/etc/ssh/authorized_keys/github` (sin contraseña, TTY ni forwarding) y después pide la clave pública
+   de CI del proyecto, que usted genera en su computadora; esa clave solo puede ejecutar el entrypoint de
+   este proyecto;
+6. verifica el resultado.
 
-Ejecutarlo de nuevo no cambia nada de lo que ya está listo. `-y` usa una carpeta existente sin preguntar
-y no espera la deploy key (como cuando no hay terminal); haga el fetch después, como el usuario.
+Ejecutarlo de nuevo no cambia nada de lo que ya está listo. `-y` usa una carpeta existente sin preguntar,
+no espera la deploy key y no pide la clave de CI (como cuando no hay terminal); haga el fetch después,
+como el usuario, y ejecute `repo:create` de nuevo para la clave de CI.
+
+La clave privada de CI va al secret `VPS_CI_KEY` de Actions del repositorio, y la línea del host key que
+muestra `repo:create` (con la dirección del servidor adelante) va a `VPS_HOST_KEY`. El workflow solo se
+conecta:
+
+```yaml
+- name: Deploy
+  run: |
+    install -m 600 /dev/null ~/.ssh/ci_key
+    echo "$CI_KEY" > ~/.ssh/ci_key
+    echo "$VPS_HOST_KEY" >> ~/.ssh/known_hosts
+    ssh -i ~/.ssh/ci_key -o IdentitiesOnly=yes -o BatchMode=yes github@<servidor>
+  env:
+    CI_KEY: ${{ secrets.VPS_CI_KEY }}
+    VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+```
 
 ## Modelo de seguridad
 
@@ -124,6 +147,12 @@ y no espera la deploy key (como cuando no hay terminal); haga el fetch después,
   (`chattr +i`), en una carpeta `entrypoints/` de root también inmutable: `github` no puede leerlo,
   modificarlo, ejecutarlo directamente ni borrarlo, y el usuario de deploy tampoco puede modificarlo ni
   borrarlo. La regla de sudo permite solo ese archivo y se escribe solo después de verificar el archivo y la carpeta.
+- **Claves SSH del CI.** Una clave por proyecto, generada fuera del servidor: cada línea del archivo de
+  root `/etc/ssh/authorized_keys/github` es `restrict,command="..."`, así que esa clave solo ejecuta el
+  entrypoint de su proyecto, sea cual sea el comando que envíe, sin shell, TTY ni túnel. De la línea
+  pegada solo quedan el tipo y la clave, la misma clave nunca se acepta dos veces, y `github` no puede
+  editar el archivo. La configuración de sshd solo se aplica después de `sshd -t` y se restaura cuando
+  falla; `user:delete` elimina las claves del usuario.
 - **Secretos.** El `.env` se lee con `sed` y nunca con `source`.
 
 Modos después de la instalación: carpeta de la herramienta `711`, `run.sh` `705`, `lib/` y `repo/` `705`
